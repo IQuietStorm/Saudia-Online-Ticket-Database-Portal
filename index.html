@@ -1364,8 +1364,7 @@
 
 
         function hasRole(role) {
-            const r = (activeProfile?.role || 'user').toLowerCase();
-            return r === role;
+            return getProfileRole(activeProfile) === role;
         }
 
         const TEMP_SUPERVISOR_DURATIONS = {
@@ -1379,9 +1378,57 @@
             '30d': 30 * 24 * 60 * 60 * 1000
         };
 
+        /** Canonical role from profiles (supports both `user_role` and `role` columns). */
+        function getProfileRole(profile) {
+            if (!profile) return 'user';
+            const userRole = String(profile.user_role ?? '').trim().toLowerCase();
+            const role = String(profile.role ?? '').trim().toLowerCase();
+            const valid = (r) => ['user', 'supervisor', 'admin'].includes(r);
+            if (valid(userRole)) return userRole;
+            if (valid(role)) return role;
+            return 'user';
+        }
+
+        function buildProfileRolePayload(roleValue) {
+            const r = String(roleValue || 'user').trim().toLowerCase();
+            return { role: r, user_role: r };
+        }
+
+        function syncProfileRoleFields(profile) {
+            if (!profile) return;
+            const r = getProfileRole(profile);
+            profile.role = r;
+            profile.user_role = r;
+        }
+
+        async function updateProfileRecord(userId, fields) {
+            let res = await saudiaClient
+                .from('profiles')
+                .update(fields)
+                .eq('id', userId)
+                .select('id, role, user_role, temp_supervisor_until');
+
+            if (res.error && /user_role/i.test(res.error.message)) {
+                const { user_role, ...rest } = fields;
+                res = await saudiaClient
+                    .from('profiles')
+                    .update(rest)
+                    .eq('id', userId)
+                    .select('id, role, temp_supervisor_until');
+            } else if (res.error && /'role'|\"role\"/i.test(res.error.message)) {
+                const { role, ...rest } = fields;
+                res = await saudiaClient
+                    .from('profiles')
+                    .update(rest)
+                    .eq('id', userId)
+                    .select('id, user_role, temp_supervisor_until');
+            }
+            return res;
+        }
+
         function isTempSupervisorActive(profile) {
             if (!profile) return false;
-            const role = String(profile.role ?? profile.user_role ?? 'user').toLowerCase();
+            const role = getProfileRole(profile);
             if (role !== 'user') return false;
             const until = profile.temp_supervisor_until;
             if (!until) return false;
@@ -1389,14 +1436,14 @@
         }
 
         function canEditTickets() {
-            const r = (activeProfile?.role || 'user').toLowerCase();
+            const r = getProfileRole(activeProfile);
             if (r === 'admin' || r === 'supervisor') return true;
             return isTempSupervisorActive(activeProfile);
         }
 
         function getRoleDisplayLabel() {
             if (isTempSupervisorActive(activeProfile)) return t('tempSup.badge');
-            return (activeProfile?.role || 'user').toUpperCase();
+            return getProfileRole(activeProfile).toUpperCase();
         }
 
         function getAccountInitials(name, email) {
@@ -1777,8 +1824,54 @@
             await refreshMfaStatus();
         }
 
+        let usersTableActionsReady = false;
+
+        function initUsersTableActions() {
+            const body = document.getElementById('usersTableBody');
+            if (!body || usersTableActionsReady) return;
+            usersTableActionsReady = true;
+
+            body.addEventListener('click', (e) => {
+                const saveBtn = e.target.closest('[data-action="save-role"]');
+                if (saveBtn) {
+                    const userId = saveBtn.getAttribute('data-user-id');
+                    const row = saveBtn.closest('tr');
+                    const sel = row?.querySelector('[data-role-select]');
+                    if (userId && sel) updateUserRole(userId, sel.value);
+                    return;
+                }
+
+                const delBtn = e.target.closest('[data-action="delete-user"]');
+                if (delBtn) {
+                    const userId = delBtn.getAttribute('data-user-id');
+                    if (userId) deleteUser(userId);
+                    return;
+                }
+
+                const grantBtn = e.target.closest('[data-action="grant-temp-sup"]');
+                if (grantBtn) {
+                    const userId = grantBtn.getAttribute('data-user-id');
+                    const row = grantBtn.closest('tr');
+                    const durSel = row?.querySelector('[data-temp-sup-duration]');
+                    if (userId && durSel) grantTempSupervisor(userId, durSel.value);
+                    return;
+                }
+
+                const revokeBtn = e.target.closest('[data-action="revoke-temp-sup"]');
+                if (revokeBtn) {
+                    const userId = revokeBtn.getAttribute('data-user-id');
+                    if (userId) revokeTempSupervisor(userId);
+                }
+            });
+        }
+
         async function loadUsers() {
-            const { data, error } = await saudiaClient.from('profiles').select('id, full_name, email, role, temp_supervisor_until');
+            initUsersTableActions();
+
+            const { data, error } = await saudiaClient
+                .from('profiles')
+                .select('id, full_name, email, role, user_role, temp_supervisor_until')
+                .order('full_name', { ascending: true });
             if (error) {
                 console.error('Load users error:', error);
                 alert("Unable to load users. Check RLS policies for `profiles`.");
@@ -1789,10 +1882,10 @@
             const durationOptions = buildTempSupervisorDurationOptions();
             
             (data || []).forEach(user => {
+                syncProfileRoleFields(user);
                 const row = body.insertRow();
-                const role = String(user.role ?? user.user_role ?? 'user').toLowerCase();
-                const roleSelId = `role_${user.id}`;
-                const tempSelId = `temp_sup_${user.id}`;
+                const role = getProfileRole(user);
+                const uid = escapeHtml(user.id);
                 const isUser = role === 'user';
                 const tempActive = isUser && isTempSupervisorActive(user);
                 const tempStatus = isUser ? formatTempSupervisorStatus(user.temp_supervisor_until) : '—';
@@ -1803,9 +1896,9 @@
                     tempCell = `
                     <td class="temp-supervisor-cell">
                         <div class="temp-supervisor-controls">
-                            <select id="${escapeHtml(tempSelId)}">${durationOptions}</select>
-                            <button type="button" onclick="grantTempSupervisor('${user.id}', document.getElementById('${escapeHtml(tempSelId)}').value)" style="background:var(--islamic-green);">${escapeHtml(t('tempSup.grant'))}</button>
-                            ${tempActive ? `<button type="button" onclick="revokeTempSupervisor('${user.id}')" style="background:#777;">${escapeHtml(t('tempSup.revoke'))}</button>` : ''}
+                            <select data-temp-sup-duration>${durationOptions}</select>
+                            <button type="button" data-action="grant-temp-sup" data-user-id="${uid}" style="background:var(--islamic-green);">${escapeHtml(t('tempSup.grant'))}</button>
+                            ${tempActive ? `<button type="button" data-action="revoke-temp-sup" data-user-id="${uid}" style="background:#777;">${escapeHtml(t('tempSup.revoke'))}</button>` : ''}
                             <span class="${tempStatusClass}">${escapeHtml(tempStatus)}</span>
                         </div>
                     </td>`;
@@ -1815,7 +1908,7 @@
                     <td>${escapeHtml(user.full_name || '')}</td>
                     <td>${escapeHtml(user.email || '-')}</td>
                     <td>
-                        <select id="${escapeHtml(roleSelId)}" style="padding:6px; border-radius:10px;">
+                        <select data-role-select style="padding:6px; border-radius:10px;">
                             <option value="user" ${role === 'user' ? 'selected' : ''}>User</option>
                             <option value="supervisor" ${role === 'supervisor' ? 'selected' : ''}>Supervisor</option>
                             <option value="admin" ${role === 'admin' ? 'selected' : ''}>Admin</option>
@@ -1823,8 +1916,8 @@
                     </td>
                     ${tempCell}
                     <td style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button onclick="updateUserRole('${user.id}', document.getElementById('${escapeHtml(roleSelId)}').value)" style="background:#8E713E; padding:5px 10px; font-size:11px;">Save</button>
-                        <button onclick="deleteUser('${user.id}')" style="background:#b22222; padding:5px 10px; font-size:11px;">Delete</button>
+                        <button type="button" data-action="save-role" data-user-id="${uid}" style="background:#8E713E; padding:5px 10px; font-size:11px;">Save</button>
+                        <button type="button" data-action="delete-user" data-user-id="${uid}" style="background:#b22222; padding:5px 10px; font-size:11px;">Delete</button>
                     </td>
                 `;
             });
@@ -1847,7 +1940,7 @@
                 return alert(fetchError.message);
             }
 
-            const role = String(profile?.role ?? 'user').toLowerCase();
+            const role = getProfileRole(profile);
             if (role !== 'user') return alert(t('tempSup.usersOnly'));
 
             const now = Date.now();
@@ -1902,14 +1995,10 @@
             const role = String(newRole || '').trim().toLowerCase();
             if (!['user', 'supervisor', 'admin'].includes(role)) return alert("Invalid role.");
 
-            const updatePayload = { role };
+            const updatePayload = { ...buildProfileRolePayload(role) };
             if (role !== 'user') updatePayload.temp_supervisor_until = null;
 
-            const { data, error } = await saudiaClient
-                .from('profiles')
-                .update(updatePayload)
-                .eq('id', userId)
-                .select('id, role');
+            const { data, error } = await updateProfileRecord(userId, updatePayload);
 
             if (error) {
                 console.error('Update role error:', error);
@@ -1918,21 +2007,26 @@
 
             const updatedUser = Array.isArray(data) ? data[0] : data;
             if (!updatedUser) {
-                console.warn('Role update returned no rows', data);
-                // No rows were returned, but the update may still have succeeded.
-                // Refresh user list to show current state.
-                loadUsers();
-                return alert("Role updated successfully.");
+                console.warn('Role update returned no rows — check admin RLS on profiles');
+                await loadUsers();
+                return alert("Role was not saved. Ensure your admin account can update profiles in Supabase RLS.");
             }
 
-            const returnedRole = String(updatedUser.role ?? '').toLowerCase();
-            if (returnedRole && returnedRole !== role) {
-                console.warn('Role update mismatch', data);
-                return alert("Role change was not saved correctly. Please refresh and try again.");
+            const returnedRole = getProfileRole(updatedUser);
+            if (returnedRole !== role) {
+                console.warn('Role update mismatch', { requested: role, returned: returnedRole, data });
+                await loadUsers();
+                return alert("Role change was not saved correctly. Please try again.");
+            }
+
+            if (activeUser?.id === userId && activeProfile) {
+                Object.assign(activeProfile, updatedUser);
+                syncProfileRoleFields(activeProfile);
+                refreshAppPermissions();
             }
 
             alert("Role updated successfully.");
-            loadUsers();
+            await loadUsers();
         }
 
         function formatRpcError(error) {
@@ -2038,8 +2132,14 @@
                 .eq('id', user.id)
                 .single();
 
-            // If profile already exists, do NOT update it (preserves admin-set roles)
             if (existingProfile && !existingError) {
+                if (roleMaybe != null && String(roleMaybe).trim() !== '') {
+                    const { error: updateErr } = await updateProfileRecord(
+                        user.id,
+                        buildProfileRolePayload(roleMaybe)
+                    );
+                    if (updateErr) return { data: existingProfile, error: updateErr };
+                }
                 return { data: existingProfile, error: null };
             }
 
@@ -2049,12 +2149,20 @@
                     id: user.id,
                     email: user.email || null,
                     full_name: (fullNameMaybe || user.user_metadata?.full_name || user.user_metadata?.fullName || '').trim() || null,
-                    role: String(roleMaybe || 'user').toLowerCase()
+                    ...buildProfileRolePayload(roleMaybe || 'user')
                 };
 
-                const { data, error } = await saudiaClient
+                let { data, error } = await saudiaClient
                     .from('profiles')
                     .insert([base]);
+
+                if (error && /user_role/i.test(error.message)) {
+                    const { user_role, ...rest } = base;
+                    ({ data, error } = await saudiaClient.from('profiles').insert([rest]));
+                } else if (error && /'role'|\"role\"/i.test(error.message)) {
+                    const { role, ...rest } = base;
+                    ({ data, error } = await saudiaClient.from('profiles').insert([rest]));
+                }
 
                 if (error) {
                     console.warn('Profile insert failed (check RLS/trigger):', error);
@@ -2121,7 +2229,7 @@
             await ensureProfileForUser(activeUser);
             const { data } = await saudiaClient.from('profiles').select('*').eq('id', activeUser.id).single();
             activeProfile = data || { id: activeUser.id, full_name: activeUser.email, role: 'user' };
-            activeProfile.role = String(activeProfile.role ?? activeProfile.user_role ?? 'user').toLowerCase();
+            syncProfileRoleFields(activeProfile);
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('main-app').style.display = 'block';
             document.getElementById('admin-dashboard').style.display = 'none';
