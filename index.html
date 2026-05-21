@@ -1865,23 +1865,49 @@
             });
         }
 
-        async function loadUsers() {
-            initUsersTableActions();
+        async function fetchProfilesForAdmin() {
+            const rpc = await saudiaClient.rpc('admin_list_profiles');
+            if (!rpc.error && rpc.data != null) {
+                let list = rpc.data;
+                if (typeof list === 'string') {
+                    try { list = JSON.parse(list); } catch (e) { list = []; }
+                }
+                if (Array.isArray(list)) return { data: list, error: null };
+            }
+            if (rpc.error) {
+                console.warn('admin_list_profiles:', rpc.error);
+                if (/admin only|not authenticated/i.test(rpc.error.message || '')) {
+                    return {
+                        data: null,
+                        error: {
+                            message: 'Your login is not marked as admin in Supabase. Run the bootstrap UPDATE in supabase-profiles-rls.sql (section 7), sign out, and sign in again.',
+                            code: rpc.error.code
+                        }
+                    };
+                }
+            }
 
-            const { data, error } = await saudiaClient
+            let res = await saudiaClient
                 .from('profiles')
                 .select('id, full_name, email, role, user_role, temp_supervisor_until')
                 .order('full_name', { ascending: true });
-            if (error) {
-                console.error('Load users error:', error);
-                alert("Unable to load users. Check RLS policies for `profiles`.");
-                return;
+
+            if (res.error && /column|does not exist/i.test(res.error.message || '')) {
+                res = await saudiaClient
+                    .from('profiles')
+                    .select('id, full_name, email, role')
+                    .order('full_name', { ascending: true });
             }
+            return res;
+        }
+
+        function renderUsersTable(users) {
             const body = document.getElementById('usersTableBody');
+            if (!body) return;
             body.innerHTML = '';
             const durationOptions = buildTempSupervisorDurationOptions();
-            
-            (data || []).forEach(user => {
+
+            (users || []).forEach(user => {
                 syncProfileRoleFields(user);
                 const row = body.insertRow();
                 const role = getProfileRole(user);
@@ -1921,6 +1947,31 @@
                     </td>
                 `;
             });
+        }
+
+        async function loadUsers() {
+            initUsersTableActions();
+
+            if (!canManageUsers()) {
+                alert("Admin only.");
+                return;
+            }
+
+            const { data, error } = await fetchProfilesForAdmin();
+            if (error) {
+                console.error('Load users error:', error);
+                const hint = (error.code === '42501' || (error.message || '').toLowerCase().includes('policy'))
+                    ? '\n\nRun supabase-profiles-rls.sql in Supabase SQL Editor, then set your account to admin.'
+                    : '';
+                alert(`Unable to load users: ${error.message}${hint}`);
+                return;
+            }
+
+            const users = data || [];
+            if (users.length <= 1) {
+                console.warn('loadUsers: only', users.length, 'profile(s). Confirm admin bootstrap in Supabase.');
+            }
+            renderUsersTable(users);
         }
 
         async function grantTempSupervisor(userId, durationKey) {
@@ -1995,17 +2046,34 @@
             const role = String(newRole || '').trim().toLowerCase();
             if (!['user', 'supervisor', 'admin'].includes(role)) return alert("Invalid role.");
 
-            const updatePayload = { ...buildProfileRolePayload(role) };
-            if (role !== 'user') updatePayload.temp_supervisor_until = null;
+            let updatedUser = null;
+            let error = null;
 
-            const { data, error } = await updateProfileRecord(userId, updatePayload);
+            const rpc = await saudiaClient.rpc('admin_set_user_role', {
+                target_user_id: userId,
+                new_role: role
+            });
+            if (!rpc.error && rpc.data) {
+                updatedUser = typeof rpc.data === 'string' ? JSON.parse(rpc.data) : rpc.data;
+            } else {
+                if (rpc.error) console.warn('admin_set_user_role:', rpc.error);
+                const updatePayload = { ...buildProfileRolePayload(role) };
+                if (role !== 'user') updatePayload.temp_supervisor_until = null;
+                const res = await updateProfileRecord(userId, updatePayload);
+                error = res.error;
+                updatedUser = Array.isArray(res.data) ? res.data[0] : res.data;
+            }
 
             if (error) {
                 console.error('Update role error:', error);
                 return alert("Error updating role: " + error.message);
             }
 
-            const updatedUser = Array.isArray(data) ? data[0] : data;
+            if (updatedUser && !Array.isArray(updatedUser)) {
+                // ok
+            } else {
+                updatedUser = Array.isArray(updatedUser) ? updatedUser[0] : updatedUser;
+            }
             if (!updatedUser) {
                 console.warn('Role update returned no rows — check admin RLS on profiles');
                 await loadUsers();
