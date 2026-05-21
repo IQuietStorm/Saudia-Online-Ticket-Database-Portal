@@ -1036,6 +1036,8 @@
                 'tempSup.granted': 'Temporary supervisor access granted until {date}.',
                 'tempSup.revoked': 'Temporary supervisor access revoked.',
                 'tempSup.revokeConfirm': 'Revoke temporary supervisor access for this user?',
+                'tempSup.saveFailed': 'Temporary supervisor access was not saved. Run supabase-profiles-rls.sql in Supabase (temp supervisor RPCs), then try again.',
+                'tempSup.saveFailed': 'Temporary access was not saved. Run the latest supabase-profiles-rls.sql in Supabase, then try again.',
                 'ticket.number': 'Ticket Number',
                 'ticket.type': 'Ticket Type',
                 'ticket.status': 'Ticket Status',
@@ -1145,6 +1147,7 @@
                 'tempSup.granted': 'تم منح صلاحية المشرف المؤقتة حتى {date}.',
                 'tempSup.revoked': 'تم إلغاء صلاحية المشرف المؤقتة.',
                 'tempSup.revokeConfirm': 'إلغاء صلاحية المشرف المؤقتة لهذا المستخدم؟',
+                'tempSup.saveFailed': 'لم يتم حفظ صلاحية المشرف المؤقتة. شغّل supabase-profiles-rls.sql في Supabase ثم أعد المحاولة.',
                 'ticket.number': 'رقم التذكرة',
                 'ticket.type': 'نوع التذكرة',
                 'ticket.status': 'حالة التذكرة',
@@ -1378,14 +1381,14 @@
             '30d': 30 * 24 * 60 * 60 * 1000
         };
 
-        /** Canonical role from profiles (supports both `user_role` and `role` columns). */
+        /** Canonical role from profiles (`role` column wins when both are set). */
         function getProfileRole(profile) {
             if (!profile) return 'user';
-            const userRole = String(profile.user_role ?? '').trim().toLowerCase();
             const role = String(profile.role ?? '').trim().toLowerCase();
+            const userRole = String(profile.user_role ?? '').trim().toLowerCase();
             const valid = (r) => ['user', 'supervisor', 'admin'].includes(r);
-            if (valid(userRole)) return userRole;
             if (valid(role)) return role;
+            if (valid(userRole)) return userRole;
             return 'user';
         }
 
@@ -1426,13 +1429,17 @@
             return res;
         }
 
+        function parseProfileTimestamp(value) {
+            if (!value) return NaN;
+            const t = Date.parse(value);
+            return Number.isNaN(t) ? NaN : t;
+        }
+
         function isTempSupervisorActive(profile) {
             if (!profile) return false;
-            const role = getProfileRole(profile);
-            if (role !== 'user') return false;
-            const until = profile.temp_supervisor_until;
-            if (!until) return false;
-            return Date.parse(until) > Date.now();
+            if (getProfileRole(profile) !== 'user') return false;
+            const exp = parseProfileTimestamp(profile.temp_supervisor_until);
+            return !Number.isNaN(exp) && exp > Date.now();
         }
 
         function canEditTickets() {
@@ -1528,17 +1535,45 @@
                 ['14d', 'tempSup.14d'],
                 ['30d', 'tempSup.30d']
             ];
-            return opts.map(([val, key]) =>
-                `<option value="${val}">${escapeHtml(t(key))}</option>`
+            return opts.map(([val, key], idx) =>
+                `<option value="${val}"${idx === 0 ? ' selected' : ''}>${escapeHtml(t(key))}</option>`
             ).join('');
         }
 
+        function parseTempSupervisorRow(row) {
+            if (!row) return null;
+            return typeof row === 'string' ? JSON.parse(row) : row;
+        }
+
+        function applyTempSupervisorLocally(userId, untilIso) {
+            if (activeUser?.id === userId && activeProfile) {
+                activeProfile.temp_supervisor_until = untilIso;
+                refreshAppPermissions();
+            }
+        }
+
         function formatTempSupervisorStatus(untilIso) {
-            if (!untilIso) return '';
-            const exp = Date.parse(untilIso);
+            if (!untilIso) return t('tempSup.expired');
+            const exp = parseProfileTimestamp(untilIso);
             if (Number.isNaN(exp)) return '';
             if (exp <= Date.now()) return t('tempSup.expired');
             return t('tempSup.activeUntil', { date: formatDateTime(untilIso) });
+        }
+
+        async function refreshActiveProfileFromServer() {
+            if (!activeUser?.id) return;
+            const { data, error } = await saudiaClient
+                .from('profiles')
+                .select('id, full_name, email, role, user_role, temp_supervisor_until')
+                .eq('id', activeUser.id)
+                .single();
+            if (error || !data) {
+                console.warn('refreshActiveProfileFromServer:', error);
+                return;
+            }
+            activeProfile = { ...activeProfile, ...data };
+            syncProfileRoleFields(activeProfile);
+            refreshAppPermissions();
         }
 
         async function initAuth() {
@@ -1980,65 +2015,109 @@
             const ms = TEMP_SUPERVISOR_DURATIONS[durationKey];
             if (!ms) return alert(t('tempSup.invalidDuration'));
 
-            const { data: profile, error: fetchError } = await saudiaClient
-                .from('profiles')
-                .select('id, role, temp_supervisor_until')
-                .eq('id', userId)
-                .single();
+            let updated = null;
+            let error = null;
 
-            if (fetchError) {
-                console.error('grantTempSupervisor fetch:', fetchError);
-                return alert(fetchError.message);
+            const rpc = await saudiaClient.rpc('admin_grant_temp_supervisor', {
+                target_user_id: userId,
+                extend_milliseconds: ms
+            });
+            if (!rpc.error && rpc.data != null) {
+                updated = parseTempSupervisorRow(rpc.data);
+            } else {
+                if (rpc.error) {
+                    console.warn('admin_grant_temp_supervisor:', rpc.error);
+                    const msg = rpc.error.message || '';
+                    if (/admin only|not authenticated|user role|only user/i.test(msg)) {
+                        return alert(msg);
+                    }
+                    if (/does not exist|admin_grant_temp_supervisor/i.test(msg)) {
+                        console.warn('Deploy supabase-profiles-rls.sql (temp supervisor RPCs) in Supabase SQL Editor.');
+                    }
+                }
+
+                const { data: profile, error: fetchError } = await saudiaClient
+                    .from('profiles')
+                    .select('id, role, user_role, temp_supervisor_until')
+                    .eq('id', userId)
+                    .single();
+
+                if (fetchError) {
+                    console.error('grantTempSupervisor fetch:', fetchError);
+                    return alert(fetchError.message);
+                }
+
+                if (getProfileRole(profile) !== 'user') return alert(t('tempSup.usersOnly'));
+
+                const now = Date.now();
+                const existing = profile?.temp_supervisor_until ? Date.parse(profile.temp_supervisor_until) : 0;
+                const base = existing > now ? existing : now;
+                const until = new Date(base + ms).toISOString();
+
+                const res = await saudiaClient
+                    .from('profiles')
+                    .update({ temp_supervisor_until: until })
+                    .eq('id', userId)
+                    .select('id, temp_supervisor_until');
+
+                error = res.error;
+                updated = Array.isArray(res.data) ? res.data[0] : res.data;
             }
-
-            const role = getProfileRole(profile);
-            if (role !== 'user') return alert(t('tempSup.usersOnly'));
-
-            const now = Date.now();
-            const existing = profile?.temp_supervisor_until ? Date.parse(profile.temp_supervisor_until) : 0;
-            const base = existing > now ? existing : now;
-            const until = new Date(base + ms).toISOString();
-
-            const { error } = await saudiaClient
-                .from('profiles')
-                .update({ temp_supervisor_until: until })
-                .eq('id', userId);
 
             if (error) {
                 console.error('grantTempSupervisor:', error);
                 return alert(error.message);
             }
 
-            if (activeUser?.id === userId && activeProfile) {
-                activeProfile.temp_supervisor_until = until;
-                refreshAppPermissions();
+            const untilIso = updated?.temp_supervisor_until;
+            if (!untilIso) {
+                await loadUsers();
+                return alert(t('tempSup.saveFailed'));
             }
 
-            alert(t('tempSup.granted', { date: formatDateTime(until) }));
-            loadUsers();
+            applyTempSupervisorLocally(userId, untilIso);
+            if (activeUser?.id === userId) await refreshActiveProfileFromServer();
+            alert(t('tempSup.granted', { date: formatDateTime(untilIso) }));
+            await loadUsers();
         }
 
         async function revokeTempSupervisor(userId) {
             if (!canManageUsers()) return alert("Admin only.");
             if (!confirm(t('tempSup.revokeConfirm'))) return;
 
-            const { error } = await saudiaClient
-                .from('profiles')
-                .update({ temp_supervisor_until: null })
-                .eq('id', userId);
+            let updated = null;
+            let error = null;
+
+            const rpc = await saudiaClient.rpc('admin_revoke_temp_supervisor', {
+                target_user_id: userId
+            });
+            if (!rpc.error && rpc.data) {
+                updated = parseTempSupervisorRow(rpc.data);
+            } else {
+                if (rpc.error) console.warn('admin_revoke_temp_supervisor:', rpc.error);
+                const res = await saudiaClient
+                    .from('profiles')
+                    .update({ temp_supervisor_until: null })
+                    .eq('id', userId)
+                    .select('id, temp_supervisor_until');
+                error = res.error;
+                updated = Array.isArray(res.data) ? res.data[0] : res.data;
+            }
 
             if (error) {
                 console.error('revokeTempSupervisor:', error);
                 return alert(error.message);
             }
 
-            if (activeUser?.id === userId && activeProfile) {
-                activeProfile.temp_supervisor_until = null;
-                refreshAppPermissions();
+            if (!updated) {
+                await loadUsers();
+                return alert(t('tempSup.saveFailed'));
             }
 
+            applyTempSupervisorLocally(userId, null);
+            if (activeUser?.id === userId) await refreshActiveProfileFromServer();
             alert(t('tempSup.revoked'));
-            loadUsers();
+            await loadUsers();
         }
 
         async function updateUserRole(userId, newRole) {
@@ -2295,7 +2374,11 @@
 
         async function loadApp() {
             await ensureProfileForUser(activeUser);
-            const { data } = await saudiaClient.from('profiles').select('*').eq('id', activeUser.id).single();
+            const { data } = await saudiaClient
+                .from('profiles')
+                .select('id, full_name, email, role, user_role, temp_supervisor_until')
+                .eq('id', activeUser.id)
+                .single();
             activeProfile = data || { id: activeUser.id, full_name: activeUser.email, role: 'user' };
             syncProfileRoleFields(activeProfile);
             document.getElementById('login-screen').style.display = 'none';
