@@ -162,6 +162,32 @@
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
         input:focus, select:focus { outline: none; border-color: var(--islamic-green); box-shadow: var(--focus-ring); }
+        /* Enhanced Date Input Styling */
+        input[type="date"] {
+            padding: 8px 12px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23009000"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"/></svg>');
+            background-repeat: no-repeat;
+            background-size: 20px;
+            background-position: right 8px center;
+            padding-right: 36px;
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+            border-radius: 4px;
+            margin-right: 2px;
+            opacity: 0.6;
+            filter: invert(0.2);
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator:hover {
+            opacity: 1;
+        }
+        input[type="date"]::-webkit-outer-spin-button,
+        input[type="date"]::-webkit-inner-spin-button {
+            display: none;
+        }
+        input[type="date"]::placeholder {
+            color: var(--muted-text);
+        }
         .dynamic-section { background: var(--surface-2); padding: 10px 12px; border-left: 3px solid var(--saudia-gold); margin-bottom: 10px; border-radius: 8px; }
         .btn-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
         button { 
@@ -737,7 +763,7 @@
                     <div id="dynamic-area" class="dynamic-section">
                         <div id="issue-info">
                             <label id="dateLabel">Date of Issue</label>
-                            <input type="date" id="issueDate">
+                            <input type="date" id="issueDate" min="2020-01-01" max="2099-12-31" required>
                             <label>Name of Issuer</label>
                             <input type="text" id="issuerName">
                             <label>Route</label>
@@ -747,11 +773,11 @@
                                 <div class="date-range">
                                     <div>
                                         <label style="font-size:10px; color:var(--muted-text);">From</label>
-                                        <input type="date" id="issuePeriodFrom">
+                                        <input type="date" id="issuePeriodFrom" min="2020-01-01" max="2099-12-31">
                                     </div>
                                     <div>
                                         <label style="font-size:10px; color:var(--muted-text);">To</label>
-                                        <input type="date" id="issuePeriodTo">
+                                        <input type="date" id="issuePeriodTo" min="2020-01-01" max="2099-12-31">
                                     </div>
                                 </div>
                             </div>
@@ -776,7 +802,7 @@
                         </div>
                         <div id="flown-box">
                             <label>Date of Flight</label>
-                            <input type="date" id="flightDate">
+                            <input type="date" id="flightDate" min="2020-01-01" max="2099-12-31" required>
                         </div>
                         <div id="entry-timestamp-display"></div>
                         <div id="ticket-value-box">
@@ -799,7 +825,7 @@
                                 <label>Refund Recipient</label>
                                 <input type="text" id="refundRecipient" placeholder="Customer / Recipient name">
                                 <label>Date of Refund</label>
-                                <input type="date" id="refundDate">
+                                <input type="date" id="refundDate" min="2020-01-01" max="2099-12-31">
                                 <label>Refund amount (in Naira)</label>
                                 <input type="number" id="refundAmountNaira" placeholder="Enter actual refund amount paid">
                             </div>
@@ -863,12 +889,12 @@
 
                 <div class="filter-item">
                     <label>Date From</label>
-                    <input type="date" id="filterDateFrom" onchange="applyFiltersAndSort()">
+                    <input type="date" id="filterDateFrom" min="2020-01-01" max="2099-12-31" onchange="applyFiltersAndSort()">
                 </div>
 
                 <div class="filter-item">
                     <label>Date To</label>
-                    <input type="date" id="filterDateTo" onchange="applyFiltersAndSort()">
+                    <input type="date" id="filterDateTo" min="2020-01-01" max="2099-12-31" onchange="applyFiltersAndSort()">
                 </div>
 
                 <div class="filter-item">
@@ -3299,7 +3325,12 @@
         }
 
         async function updateTicket() {
-            if (!activeProfile || !canEditTickets()) return alert("Supervisor/Admin only.");
+            if (!activeProfile || !canEditTickets()) {
+                const msg = isTempSupervisorActive(activeProfile) ? 
+                    "Your temporary supervisor privileges have expired." : 
+                    "Ticket editing requires supervisor or admin privileges (or active temporary supervisor assignment).";
+                return alert(msg);
+            }
             if (!selectedTicketId) return alert("Select a ticket row first.");
 
             const rawTicketNum = normalizeTicketNum(document.getElementById('ticketNum').value);
@@ -3389,7 +3420,12 @@
         }
 
         async function deleteTicket() {
-            if (!activeProfile || !canEditTickets()) return alert("Supervisor/Admin only.");
+            if (!activeProfile || !canEditTickets()) {
+                const msg = isTempSupervisorActive(activeProfile) ? 
+                    "Your temporary supervisor privileges have expired." : 
+                    "Ticket deletion requires supervisor or admin privileges (or active temporary supervisor assignment).";
+                return alert(msg);
+            }
 
             if (!selectedTicketId) {
                 const checked = Array.from(document.querySelectorAll('.export-check:checked')).map(cb => cb.getAttribute('data-id')).filter(Boolean);
@@ -3505,11 +3541,40 @@
             downloadTicketsCsv(buildTicketsCsv(toExport), 'Selected');
         }
 
+        function initializeDatePickers() {
+            const today = new Date().toISOString().split('T')[0];
+            const issueDate = document.getElementById('issueDate');
+            const flightDate = document.getElementById('flightDate');
+            const refundDate = document.getElementById('refundDate');
+            
+            // Set today's date as default for issue and flight dates
+            if (issueDate && !issueDate.value) {
+                issueDate.value = today;
+            }
+            if (flightDate && !flightDate.value) {
+                flightDate.value = today;
+            }
+            
+            // Add calendar-focused styling
+            const dateInputs = document.querySelectorAll('input[type="date"]');
+            dateInputs.forEach(input => {
+                input.addEventListener('click', function() {
+                    this.showPicker?.();
+                });
+                input.addEventListener('focus', function() {
+                    if (this.showPicker) {
+                        this.showPicker();
+                    }
+                });
+            });
+        }
+
         applyUiPrefs();
         syncRememberMeCheckbox();
         setLanguage(localStorage.getItem('tms_lang') || 'en');
         setAuthMode('signin');
         toggleDynamicFields();
+        initializeDatePickers();
         initAuth();
     </script>
 </body>
