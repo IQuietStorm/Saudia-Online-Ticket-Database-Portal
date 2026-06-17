@@ -1370,6 +1370,8 @@
 
         let activeUser, activeProfile, ticketsList = [], selectedTicketId = null;
         let chatChannel = null;
+        let chatPollTimer = null;
+        const CHAT_POLL_MS = 8000;
         let chatMessages = [];
         let chatProfiles = [];
         let activeChatThreadId = 'team';
@@ -2242,6 +2244,17 @@
             chatChannel = null;
         }
 
+        function stopChatPolling() {
+            if (!chatPollTimer) return;
+            clearInterval(chatPollTimer);
+            chatPollTimer = null;
+        }
+
+        function startChatPolling() {
+            stopChatPolling();
+            chatPollTimer = setInterval(() => fetchChatMessages({ silent: true }), CHAT_POLL_MS);
+        }
+
         function toggleChatPanel() {
             const panel = document.getElementById('chatPanel');
             if (!panel) return;
@@ -2249,6 +2262,7 @@
             panel.classList.toggle('active');
             if (opening) {
                 markThreadRead(activeChatThreadId);
+                fetchChatMessages({ silent: true });
                 const input = document.getElementById('chatMessageInput');
                 if (input) input.focus();
             }
@@ -2598,8 +2612,9 @@
             updateChatThreadTitle();
             try {
                 disconnectChatChannel();
+                const channelName = `chat_messages_${activeUser.id}`;
                 chatChannel = saudiaClient
-                    .channel('chat_messages')
+                    .channel(channelName)
                     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, payload => {
                         if (!payload?.new) return;
                         const newMessage = payload.new;
@@ -2612,10 +2627,15 @@
                         chatMessages = chatMessages.filter(m => m.id !== deletedId);
                         renderChatMessages();
                     })
-                    .subscribe();
+                    .subscribe((status) => {
+                        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                            console.warn('Chat subscription:', status);
+                        }
+                    });
             } catch (error) {
                 console.warn('Chat subscription failed:', error);
             }
+            startChatPolling();
         }
 
         function renderChatMessages() {
@@ -2721,10 +2741,12 @@
             renderChatMessages();
         }
 
-        async function fetchChatMessages() {
-            setChatStatus('Loading messages…');
-            const body = document.getElementById('chatBody');
-            if (body) body.innerHTML = '';
+        async function fetchChatMessages({ silent = false } = {}) {
+            if (!silent) {
+                setChatStatus('Loading messages…');
+                const body = document.getElementById('chatBody');
+                if (body) body.innerHTML = '';
+            }
 
             const { data, error } = await saudiaClient
                 .from('chat_messages')
@@ -2734,14 +2756,16 @@
 
             if (error) {
                 console.warn('Chat load failed:', error);
-                setChatStatus('Chat unavailable.');
+                if (!silent) setChatStatus('Chat unavailable.');
                 return;
             }
             chatMessages = (data || []).map(normalizeChatMessage);
             computeUnreadFromMessages();
             renderChatMessages();
             updateChatThreadTitle();
-            setChatStatus(chatMessages.length ? 'Chat is live.' : 'No messages yet. Start the conversation.');
+            if (!silent) {
+                setChatStatus(chatMessages.length ? 'Chat is live.' : 'No messages yet. Start the conversation.');
+            }
         }
 
         async function sendChatMessage() {
@@ -2762,8 +2786,11 @@
                 recipient_roles: mentionData.recipient_roles,
                 is_private: Boolean(mentionData.recipient_ids || mentionData.recipient_roles)
             };
-            // If a direct chatbox is active, send as private message to that member
-            if (activeChatThreadId && activeChatThreadId !== 'team') {
+            // Team thread: public message for everyone; mentions only drive alert badges
+            if (activeChatThreadId === 'team') {
+                payload.is_private = false;
+            } else if (activeChatThreadId) {
+                // Direct chatbox: private message to that member
                 payload.recipient_ids = [activeChatThreadId];
                 payload.recipient_roles = null;
                 payload.is_private = true;
@@ -3054,6 +3081,7 @@
             stopGeneralInactivityTimer();
             closeAccountMenu();
             disconnectChatChannel();
+            stopChatPolling();
             await saudiaClient.auth.signOut();
             activeUser = null;
             activeProfile = null;
