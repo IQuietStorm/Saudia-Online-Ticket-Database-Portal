@@ -1943,8 +1943,35 @@
             return recipients.length ? `To ${recipients.join(', ')}` : '';
         }
 
+        function ensureActiveUserInChatProfiles() {
+            if (activeUser && activeProfile && !chatProfiles.some(p => p.id === activeUser.id)) {
+                chatProfiles.push({
+                    id: activeUser.id,
+                    full_name: getProfileDisplayName(activeProfile, activeUser),
+                    email: activeUser.email,
+                    role: getProfileRole(activeProfile),
+                    user_role: getProfileRole(activeProfile)
+                });
+            }
+        }
+
         async function loadChatProfiles() {
-            // load all profiles in pages to include every account as a chat member
+            // Prefer RPC: reads all auth accounts and bypasses restrictive profile RLS.
+            const rpc = await saudiaClient.rpc('list_chat_members');
+            if (!rpc.error && Array.isArray(rpc.data)) {
+                chatProfiles = rpc.data.filter(p => p && p.id);
+                ensureActiveUserInChatProfiles();
+                updateMembersBtnCount();
+                return;
+            }
+            if (rpc.error) {
+                console.warn(
+                    'list_chat_members RPC unavailable — run profiles_public_select.sql in Supabase SQL Editor:',
+                    rpc.error
+                );
+            }
+
+            // Fallback: direct profiles query (requires open SELECT policy above).
             const pageSize = SUPABASE_PAGE_SIZE || 1000;
             let from = 0;
             let all = [];
@@ -1965,15 +1992,7 @@
                 from += pageSize;
             }
             chatProfiles = all;
-            if (activeUser && activeProfile && !chatProfiles.some(p => p.id === activeUser.id)) {
-                chatProfiles.push({
-                    id: activeUser.id,
-                    full_name: getProfileDisplayName(activeProfile, activeUser),
-                    email: activeUser.email,
-                    role: getProfileRole(activeProfile),
-                    user_role: getProfileRole(activeProfile)
-                });
-            }
+            ensureActiveUserInChatProfiles();
             updateMembersBtnCount();
         }
 
@@ -2014,7 +2033,10 @@
             });
             listEl.innerHTML = '';
             if (!items.length) {
-                listEl.innerHTML = '<div style="padding:12px;color:var(--muted-text);font-size:13px;">No members found. Try Refresh — all registered accounts should appear here.</div>';
+                const onlySelf = (chatProfiles || []).length <= 1;
+                listEl.innerHTML = onlySelf
+                    ? '<div style="padding:12px;color:var(--muted-text);font-size:13px;">Only your account is visible. Run <strong>profiles_public_select.sql</strong> in the Supabase SQL Editor, then click Refresh.</div>'
+                    : '<div style="padding:12px;color:var(--muted-text);font-size:13px;">No members match your search.</div>';
                 return;
             }
             items.forEach(p => {
