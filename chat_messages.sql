@@ -1,6 +1,4 @@
--- Create a chat stream with support for public, role-targeted, and user-targeted messages.
--- Run this in Supabase SQL Editor.
-
+-- Create table
 CREATE TABLE IF NOT EXISTS public.chat_messages (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     sender_id uuid,
@@ -9,11 +7,17 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
     recipient_ids uuid[] DEFAULT NULL,
     recipient_roles text[] DEFAULT NULL,
     is_private boolean NOT NULL DEFAULT false,
+    reply_to uuid DEFAULT NULL,
     created_at timestamptz NOT NULL DEFAULT timezone('utc', now())
 );
 
 ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 
+-- Remove existing policies so the script can be run multiple times
+DROP POLICY IF EXISTS "authenticated_select" ON public.chat_messages;
+DROP POLICY IF EXISTS "authenticated_insert" ON public.chat_messages;
+
+-- Recreate SELECT policy
 CREATE POLICY "authenticated_select" ON public.chat_messages
   FOR SELECT
   USING (
@@ -29,25 +33,13 @@ CREATE POLICY "authenticated_select" ON public.chat_messages
           OR (
               recipient_roles IS NOT NULL
               AND (
-                  (SELECT user_role FROM public.profiles WHERE id = auth.uid()) = ANY(recipient_roles)
-                  OR (SELECT role FROM public.profiles WHERE id = auth.uid()) = ANY(recipient_roles)
+                  (SELECT role FROM public.profiles WHERE id = auth.uid()) = ANY(recipient_roles)
               )
           )
       )
   );
 
+-- Recreate INSERT policy
 CREATE POLICY "authenticated_insert" ON public.chat_messages
   FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
-
--- If you want to allow authenticated users to delete or update their own messages,
--- create separate policies below. By default, no one may modify or delete messages.
---
--- CREATE POLICY "authenticated_delete_own" ON public.chat_messages
---   FOR DELETE
---   USING (auth.role() = 'authenticated' AND sender_id = auth.uid());
---
--- CREATE POLICY "authenticated_update_own" ON public.chat_messages
---   FOR UPDATE
---   USING (auth.role() = 'authenticated' AND sender_id = auth.uid())
---   WITH CHECK (auth.role() = 'authenticated');
