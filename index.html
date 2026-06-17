@@ -1452,6 +1452,27 @@
             return panel && panel.classList.contains('active');
         }
 
+        function parsePgTextArray(val) {
+            if (!val) return [];
+            if (Array.isArray(val)) return val;
+            const s = String(val).trim();
+            if (!s || s === '{}') return [];
+            if (s.startsWith('{') && s.endsWith('}')) {
+                return s.slice(1, -1).split(',').map(x => x.trim()).filter(Boolean);
+            }
+            return [s];
+        }
+
+        function normalizeChatMessage(msg) {
+            if (!msg) return msg;
+            return {
+                ...msg,
+                recipient_ids: parsePgTextArray(msg.recipient_ids),
+                recipient_roles: parsePgTextArray(msg.recipient_roles),
+                is_private: Boolean(msg.is_private)
+            };
+        }
+
         function getMessageThreadKey(msg) {
             if (!msg || !activeUser?.id) return null;
             const me = activeUser.id;
@@ -2679,6 +2700,8 @@
         }
 
         function handleIncomingMessage(newMessage) {
+            newMessage = normalizeChatMessage(newMessage);
+            if (chatMessages.some(m => m.id === newMessage.id)) return;
             chatMessages.push(newMessage);
             try {
                 const threadId = getMessageThreadKey(newMessage);
@@ -2714,7 +2737,7 @@
                 setChatStatus('Chat unavailable.');
                 return;
             }
-            chatMessages = data || [];
+            chatMessages = (data || []).map(normalizeChatMessage);
             computeUnreadFromMessages();
             renderChatMessages();
             updateChatThreadTitle();
@@ -2748,19 +2771,17 @@
             // attach reply id if replying
             if (replyToMessageId) payload.reply_to = replyToMessageId;
 
-            const { data, error } = await saudiaClient.from('chat_messages').insert([payload]).select();
+            const { data, error } = await saudiaClient
+                .from('chat_messages')
+                .insert([payload])
+                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, reply_to, created_at');
             btn.disabled = false;
             if (error) {
                 console.warn('Unable to send chat message:', error);
                 alert('Unable to send message.');
                 return;
             }
-            // Add message locally so it appears immediately
-            if (Array.isArray(data) && data.length > 0) {
-                const sentMsg = data[0];
-                chatMessages.push(sentMsg);
-                renderChatMessages();
-            }
+            if (data?.[0]) handleIncomingMessage(data[0]);
             input.value = '';
             input.focus();
             // clear reply state after successful send
