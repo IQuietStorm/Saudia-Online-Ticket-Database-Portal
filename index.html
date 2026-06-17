@@ -435,7 +435,82 @@
             font-size: 13px;
             line-height: 1.45;
             position: relative;
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
         }
+        .chat-message-select {
+            flex: 0 0 auto;
+            padding-top: 2px;
+        }
+        .chat-message-select input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: var(--islamic-green);
+        }
+        .chat-message-body { flex: 1 1 auto; min-width: 0; }
+        .chat-message.pending-reply-target {
+            box-shadow: 0 0 0 2px rgba(0,144,0,0.35);
+            background: rgba(0,144,0,0.06);
+        }
+        .chat-bulk-bar {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            font-size: 12px;
+            background: var(--surface-3);
+            border-bottom: 1px solid rgba(0,0,0,0.06);
+            flex-shrink: 0;
+        }
+        .chat-bulk-bar.active { display: flex; }
+        .chat-bulk-bar .mini-btn.danger { color: #b00020; border-color: rgba(176,0,32,0.35); }
+        .chat-forward-panel {
+            position: absolute;
+            inset: 0;
+            z-index: 7;
+            padding: 10px 12px;
+            background: var(--card-bg);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chat-forward-panel.open { display: flex; }
+        .chat-forward-preview {
+            font-size: 12px;
+            color: var(--muted-text);
+            padding: 8px 10px;
+            background: var(--surface-2);
+            border-radius: 10px;
+            margin-bottom: 8px;
+            max-height: 72px;
+            overflow: auto;
+            flex-shrink: 0;
+        }
+        .chat-forward-options {
+            font-size: 12px;
+            margin-bottom: 8px;
+            flex-shrink: 0;
+        }
+        .chat-forward-list {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .chat-forward-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .chat-forward-item:hover { background: rgba(0,0,0,0.03); }
+        .chat-forward-item input { accent-color: var(--islamic-green); }
         .chat-message .chat-text {
             font-size: 13px;
             line-height: 1.45;
@@ -1287,13 +1362,19 @@
                     <div class="chat-header">
                         <h3 id="chatThreadTitle">Team Chat</h3>
                         <div style="display:flex;gap:8px;align-items:center;">
+                            <button id="chatBulkSelectBtn" class="mini-btn" type="button" onclick="toggleChatBulkSelect()" title="Select messages to delete">Select</button>
                             <button id="chatMembersBtn" class="mini-btn" onclick="toggleMembersPanel()" title="View all members">Members</button>
                             <button class="chat-close-btn" onclick="toggleChatPanel()" aria-label="Close chat">×</button>
                         </div>
                     </div>
                     <div class="chat-main">
+                        <div id="chatBulkBar" class="chat-bulk-bar">
+                            <span id="chatBulkCount">0 selected</span>
+                            <button type="button" class="mini-btn danger" onclick="deleteSelectedChatMessages()">Delete selected</button>
+                            <button type="button" class="mini-btn alt" onclick="toggleChatBulkSelect(false)">Cancel</button>
+                        </div>
                         <div id="chatStatus" class="chat-status">Loading messages…</div>
-                        <div class="chat-hint">Select a member for a private chatbox. Double-click or right-click a message to reply.</div>
+                        <div class="chat-hint">Private chat via Members. Right-click a message to reply or forward.</div>
                         <div id="chatBody" class="chat-body"></div>
                         <div id="chatMembersPanel" class="chat-members-panel">
                             <div class="chat-members-header">
@@ -1302,6 +1383,20 @@
                                 <button class="mini-btn alt" onclick="toggleMembersPanel()">Close</button>
                             </div>
                             <div id="chatMembersList" class="chat-members-list"></div>
+                        </div>
+                        <div id="chatForwardPanel" class="chat-forward-panel" aria-label="Forward message">
+                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-shrink:0;">
+                                <strong style="font-size:13px;color:var(--islamic-green);">Forward message</strong>
+                                <span style="flex:1;"></span>
+                                <button type="button" class="mini-btn alt" onclick="closeForwardPanel()">Cancel</button>
+                                <button type="button" class="mini-btn" onclick="confirmForwardMessage()">Forward</button>
+                            </div>
+                            <div id="chatForwardPreview" class="chat-forward-preview"></div>
+                            <div class="chat-forward-options">
+                                <label><input type="checkbox" id="chatForwardToTeam" /> Also post to Team chat</label>
+                            </div>
+                            <input id="chatForwardSearch" type="text" placeholder="Search recipients..." style="padding:6px 8px;border-radius:8px;border:1px solid var(--input-border);font-size:13px;margin-bottom:8px;flex-shrink:0;" oninput="renderForwardRecipientList(this.value)" />
+                            <div id="chatForwardList" class="chat-forward-list"></div>
                         </div>
                     </div>
                     <div id="chatReplyBox" class="chat-reply-box" style="display:none; padding:8px 12px; background:var(--surface-3); border-top:1px solid rgba(0,0,0,0.04);">
@@ -1380,6 +1475,9 @@
         let chatLastRead = { team: 0 };
         let replyToMessageId = null;
         let chatContextMessageId = null;
+        let chatForwardMessageId = null;
+        let chatBulkSelectMode = false;
+        let chatSelectedMessageIds = new Set();
         const emojiList = ['😀','😄','😅','😊','😍','😎','😡','😭','👍','🎉','❤️','🙏','🤝','💬','🤩'];
 
         function getChatReadStorageKey() {
@@ -1631,15 +1729,20 @@
 
         function switchChatThread(threadId) {
             if (!threadId) return;
+            if (activeChatThreadId !== threadId) {
+                cancelReply();
+                chatSelectedMessageIds.clear();
+            }
             activeChatThreadId = threadId;
             openChatThreads[threadId] = true;
-            cancelReply();
             updateChatThreadTitle();
             renderChatMessages();
             if (isChatPanelOpen()) markThreadRead(threadId);
             renderChatThreadsList();
+            updateChatBulkBar();
             const membersPanel = document.getElementById('chatMembersPanel');
             if (membersPanel) membersPanel.classList.remove('open');
+            closeForwardPanel();
         }
 
         function openDmThread(userId) {
@@ -2639,9 +2742,9 @@
         }
 
         function renderChatMessages() {
-            const body = document.getElementById('chatBody');
-            if (!body) return;
-            body.innerHTML = '';
+            const chatBody = document.getElementById('chatBody');
+            if (!chatBody) return;
+            chatBody.innerHTML = '';
             chatMessages = Array.isArray(chatMessages) ? chatMessages : [];
             const msgsToRender = activeChatThreadId === 'team'
                 ? chatMessages.filter(isTeamMessage)
@@ -2649,12 +2752,28 @@
             msgsToRender.forEach(msg => {
                 const wrapper = document.createElement('div');
                 const isSelf = activeUser && msg.sender_id === activeUser.id;
-                wrapper.className = `chat-message${isSelf ? ' self' : ''}`;
-                if (msg.reply_to) wrapper.classList.add('reply-highlight');
+                const isReplyTarget = replyToMessageId && msg.id === replyToMessageId;
+                wrapper.className = `chat-message${isSelf ? ' self' : ''}${isReplyTarget ? ' pending-reply-target' : ''}`;
+                if (chatBulkSelectMode) {
+                    const selectWrap = document.createElement('div');
+                    selectWrap.className = 'chat-message-select';
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.checked = chatSelectedMessageIds.has(msg.id);
+                    cb.title = 'Select for delete';
+                    cb.addEventListener('change', () => {
+                        if (cb.checked) chatSelectedMessageIds.add(msg.id);
+                        else chatSelectedMessageIds.delete(msg.id);
+                        updateChatBulkBar();
+                    });
+                    selectWrap.appendChild(cb);
+                    wrapper.appendChild(selectWrap);
+                }
+                const messageBody = document.createElement('div');
+                messageBody.className = 'chat-message-body';
                 const senderName = escapeHtml(msg.sender_name || (isSelf ? 'Me' : 'Unknown'));
                 const timestamp = escapeHtml(formatDateTime(msg.created_at));
                 const targetSummary = getChatTargetSummary(msg);
-                // reply snippet (if present)
                 let replyHtml = '';
                 if (msg.reply_to) {
                     const parent = chatMessages.find(m => m.id === msg.reply_to);
@@ -2664,13 +2783,17 @@
                         replyHtml = `<div class="chat-reply-snippet">In reply to <strong>${pName}</strong>: ${snippet}</div>`;
                     }
                 }
-                wrapper.innerHTML = `
+                messageBody.innerHTML = `
                     <div class="chat-meta">${senderName} · ${timestamp}</div>
                     ${targetSummary ? `<div class="chat-target">${escapeHtml(targetSummary)}</div>` : ''}
                     ${replyHtml}
                     <div class="chat-text">${escapeHtml(msg.message)}</div>
                 `;
-                wrapper.addEventListener('dblclick', () => setReplyTo(msg.id));
+                wrapper.appendChild(messageBody);
+                wrapper.addEventListener('dblclick', (ev) => {
+                    if (chatBulkSelectMode) return;
+                    setReplyTo(msg.id);
+                });
                 wrapper.addEventListener('contextmenu', (ev) => {
                     ev.preventDefault();
                     showChatContextMenu(ev.clientX, ev.clientY, msg.id);
@@ -2692,16 +2815,18 @@
                         setReplyTo(msg.id);
                     }
                 });
-                body.appendChild(wrapper);
+                chatBody.appendChild(wrapper);
             });
-            if (body.children.length) {
-                body.scrollTop = body.scrollHeight;
+            if (chatBody.children.length) {
+                chatBody.scrollTop = chatBody.scrollHeight;
             }
         }
 
         function setReplyTo(messageId) {
             const msg = chatMessages.find(m => m.id === messageId);
             if (!msg) return;
+            closeAutocomplete();
+            closeForwardPanel();
             replyToMessageId = messageId;
             const nameEl = document.getElementById('chatReplyName');
             const snipEl = document.getElementById('chatReplySnippet');
@@ -2709,7 +2834,9 @@
             if (nameEl) nameEl.textContent = getProfileDisplayName({ full_name: msg.sender_name }, { email: msg.sender_name });
             if (snipEl) snipEl.textContent = (msg.message || '').slice(0, 140);
             if (box) box.style.display = 'block';
-            const input = document.getElementById('chatMessageInput'); if (input) input.focus();
+            renderChatMessages();
+            const input = document.getElementById('chatMessageInput');
+            if (input) input.focus();
             hideChatContextMenu();
         }
 
@@ -2717,6 +2844,201 @@
             replyToMessageId = null;
             const box = document.getElementById('chatReplyBox');
             if (box) box.style.display = 'none';
+            renderChatMessages();
+        }
+
+        function buildForwardMessageText(msg) {
+            if (!msg) return '';
+            const name = msg.sender_name || 'Unknown';
+            const ts = formatDateTime(msg.created_at);
+            return `[Forwarded from ${name} · ${ts}]\n${msg.message || ''}`;
+        }
+
+        function buildChatInsertPayload(messageText, { recipientId = null, isTeam = false, replyTo = null } = {}) {
+            const mentionData = extractChatMentions(messageText);
+            const senderName = getProfileDisplayName(activeProfile, activeUser) || activeUser?.email || 'Unknown';
+            const payload = {
+                sender_id: activeUser?.id || null,
+                sender_name: senderName,
+                message: messageText,
+                recipient_ids: mentionData.recipient_ids,
+                recipient_roles: mentionData.recipient_roles,
+                is_private: Boolean(mentionData.recipient_ids || mentionData.recipient_roles)
+            };
+            if (isTeam) {
+                payload.is_private = false;
+            } else if (recipientId) {
+                payload.recipient_ids = [recipientId];
+                payload.recipient_roles = null;
+                payload.is_private = true;
+            } else if (activeChatThreadId === 'team') {
+                payload.is_private = false;
+            } else if (activeChatThreadId) {
+                payload.recipient_ids = [activeChatThreadId];
+                payload.recipient_roles = null;
+                payload.is_private = true;
+            }
+            if (replyTo && chatMessages.some(m => m.id === replyTo)) {
+                payload.reply_to = replyTo;
+            }
+            return payload;
+        }
+
+        async function insertChatMessage(payload) {
+            return saudiaClient
+                .from('chat_messages')
+                .insert([payload])
+                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, reply_to, created_at');
+        }
+
+        function updateChatBulkBar() {
+            const bar = document.getElementById('chatBulkBar');
+            const countEl = document.getElementById('chatBulkCount');
+            const btn = document.getElementById('chatBulkSelectBtn');
+            const n = chatSelectedMessageIds.size;
+            if (countEl) countEl.textContent = `${n} selected`;
+            if (bar) bar.classList.toggle('active', chatBulkSelectMode);
+            if (btn) btn.textContent = chatBulkSelectMode ? 'Done' : 'Select';
+        }
+
+        function toggleChatBulkSelect(force) {
+            const next = typeof force === 'boolean' ? force : !chatBulkSelectMode;
+            chatBulkSelectMode = next;
+            if (!next) chatSelectedMessageIds.clear();
+            hideChatContextMenu();
+            closeForwardPanel();
+            updateChatBulkBar();
+            renderChatMessages();
+        }
+
+        function canDeleteChatMessage(msg) {
+            if (!msg || !activeUser) return false;
+            return msg.sender_id === activeUser.id || canManageUsers();
+        }
+
+        async function deleteSelectedChatMessages() {
+            if (!chatSelectedMessageIds.size) {
+                alert('Select at least one message to delete.');
+                return;
+            }
+            const ids = Array.from(chatSelectedMessageIds);
+            const msgs = ids.map(id => chatMessages.find(m => m.id === id)).filter(Boolean);
+            const allowed = msgs.filter(canDeleteChatMessage);
+            if (!allowed.length) {
+                alert('You do not have permission to delete the selected messages.');
+                return;
+            }
+            if (allowed.length < msgs.length) {
+                alert('Some selected messages cannot be deleted. Only your own messages (or any as admin) will be removed.');
+            }
+            const confirmText = allowed.length === 1
+                ? 'Permanently delete this message? This cannot be undone.'
+                : `Permanently delete ${allowed.length} message(s)? This cannot be undone.`;
+            if (!confirm(confirmText)) return;
+            for (const msg of allowed) {
+                const { error } = await saudiaClient.from('chat_messages').delete().eq('id', msg.id);
+                if (error) {
+                    console.warn('Unable to delete chat message:', error);
+                    alert('Unable to delete one or more messages.');
+                    break;
+                }
+                chatMessages = chatMessages.filter(m => m.id !== msg.id);
+                chatSelectedMessageIds.delete(msg.id);
+            }
+            updateChatBulkBar();
+            renderChatMessages();
+        }
+
+        function openForwardPanel(messageId) {
+            const msg = chatMessages.find(m => m.id === messageId);
+            if (!msg) return;
+            hideChatContextMenu();
+            cancelReply();
+            chatForwardMessageId = messageId;
+            const panel = document.getElementById('chatForwardPanel');
+            const preview = document.getElementById('chatForwardPreview');
+            const teamCb = document.getElementById('chatForwardToTeam');
+            const search = document.getElementById('chatForwardSearch');
+            if (preview) preview.textContent = buildForwardMessageText(msg);
+            if (teamCb) teamCb.checked = activeChatThreadId === 'team';
+            if (search) search.value = '';
+            if (panel) panel.classList.add('open');
+            const membersPanel = document.getElementById('chatMembersPanel');
+            if (membersPanel) membersPanel.classList.remove('open');
+            renderForwardRecipientList('');
+        }
+
+        function closeForwardPanel() {
+            chatForwardMessageId = null;
+            const panel = document.getElementById('chatForwardPanel');
+            if (panel) panel.classList.remove('open');
+        }
+
+        function renderForwardRecipientList(filterText) {
+            const list = document.getElementById('chatForwardList');
+            if (!list) return;
+            const q = String(filterText || '').trim().toLowerCase();
+            list.innerHTML = '';
+            const candidates = (chatProfiles || []).filter(p => {
+                if (!p?.id || p.id === activeUser?.id) return false;
+                if (!q) return true;
+                const name = String(p.full_name || '').toLowerCase();
+                const email = String(p.email || '').toLowerCase();
+                return name.includes(q) || email.includes(q);
+            });
+            if (!candidates.length) {
+                list.innerHTML = '<div style="font-size:12px;color:var(--muted-text);padding:8px;">No members match.</div>';
+                return;
+            }
+            candidates.forEach(p => {
+                const row = document.createElement('label');
+                row.className = 'chat-forward-item';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.value = p.id;
+                cb.className = 'chat-forward-recipient-cb';
+                const name = document.createElement('span');
+                name.textContent = `${getProfileDisplayName(p)} (${p.email || ''})`;
+                row.appendChild(cb);
+                row.appendChild(name);
+                list.appendChild(row);
+            });
+        }
+
+        async function confirmForwardMessage() {
+            const msg = chatMessages.find(m => m.id === chatForwardMessageId);
+            if (!msg) {
+                closeForwardPanel();
+                return;
+            }
+            const list = document.getElementById('chatForwardList');
+            const teamCb = document.getElementById('chatForwardToTeam');
+            const recipientIds = list
+                ? Array.from(list.querySelectorAll('.chat-forward-recipient-cb:checked')).map(cb => cb.value).filter(Boolean)
+                : [];
+            const toTeam = teamCb?.checked;
+            if (!recipientIds.length && !toTeam) {
+                alert('Select at least one recipient or Team chat.');
+                return;
+            }
+            const text = buildForwardMessageText(msg);
+            let failed = false;
+            if (toTeam) {
+                const { data, error } = await insertChatMessage(buildChatInsertPayload(text, { isTeam: true }));
+                if (error) {
+                    console.warn('Forward to team failed:', error);
+                    failed = true;
+                } else if (data?.[0]) handleIncomingMessage(data[0]);
+            }
+            for (const recipientId of recipientIds) {
+                const { data, error } = await insertChatMessage(buildChatInsertPayload(text, { recipientId }));
+                if (error) {
+                    console.warn('Forward to member failed:', error);
+                    failed = true;
+                } else if (data?.[0]) handleIncomingMessage(data[0]);
+            }
+            if (failed) alert('Some forwards could not be sent.');
+            closeForwardPanel();
         }
 
         function handleIncomingMessage(newMessage) {
@@ -2774,46 +3096,34 @@
             if (!input || !btn) return;
             const message = String(input.value || '').trim();
             if (!message) return;
+            closeAutocomplete();
             btn.disabled = true;
 
-            const mentionData = extractChatMentions(message);
-            const senderName = getProfileDisplayName(activeProfile, activeUser) || activeUser?.email || 'Unknown';
-            const payload = {
-                sender_id: activeUser?.id || null,
-                sender_name: senderName,
-                message: message,
-                recipient_ids: mentionData.recipient_ids,
-                recipient_roles: mentionData.recipient_roles,
-                is_private: Boolean(mentionData.recipient_ids || mentionData.recipient_roles)
-            };
-            // Team thread: public message for everyone; mentions only drive alert badges
-            if (activeChatThreadId === 'team') {
-                payload.is_private = false;
-            } else if (activeChatThreadId) {
-                // Direct chatbox: private message to that member
-                payload.recipient_ids = [activeChatThreadId];
-                payload.recipient_roles = null;
-                payload.is_private = true;
-            }
-            // attach reply id if replying
-            if (replyToMessageId) payload.reply_to = replyToMessageId;
+            const replyTarget = replyToMessageId;
+            const payload = buildChatInsertPayload(message, { replyTo: replyTarget });
 
-            const { data, error } = await saudiaClient
-                .from('chat_messages')
-                .insert([payload])
-                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, reply_to, created_at');
+            let { data, error } = await insertChatMessage(payload);
+            if (error && replyTarget) {
+                console.warn('Reply send failed, retrying without reply link:', error);
+                delete payload.reply_to;
+                const retry = await insertChatMessage(payload);
+                data = retry.data;
+                error = retry.error;
+            }
             btn.disabled = false;
             if (error) {
                 console.warn('Unable to send chat message:', error);
-                alert('Unable to send message.');
+                const detail = error.message || error.details || '';
+                alert(detail ? `Unable to send message: ${detail}` : 'Unable to send message.');
                 return;
             }
             if (data?.[0]) handleIncomingMessage(data[0]);
             input.value = '';
             input.focus();
-            // clear reply state after successful send
             replyToMessageId = null;
-            const box = document.getElementById('chatReplyBox'); if (box) box.style.display = 'none';
+            const box = document.getElementById('chatReplyBox');
+            if (box) box.style.display = 'none';
+            renderChatMessages();
             hideEmojiPicker();
         }
 
@@ -2875,21 +3185,36 @@
             chatContextMessageId = messageId;
             const isOwn = activeUser && msg.sender_id === activeUser.id;
             const isAdmin = canManageUsers();
-            let html = `<button type="button" onclick="replyToContextMessage()">Reply</button>`;
+            menu.innerHTML = '';
+            const addBtn = (label, action, className = '') => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = label;
+                if (className) btn.className = className;
+                btn.addEventListener('mousedown', (ev) => ev.preventDefault());
+                btn.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    action();
+                });
+                menu.appendChild(btn);
+            };
+            addBtn('Reply', () => replyToContextMessage(messageId));
+            addBtn('Forward', () => openForwardPanel(messageId));
             if (isOwn) {
-                html += `<button type="button" class="danger" onclick="deleteChatMessage()">Delete permanently</button>`;
+                addBtn('Delete permanently', () => deleteChatMessage(messageId), 'danger');
             } else if (isAdmin) {
-                html += `<button type="button" class="danger" onclick="deleteChatMessage()">Delete permanently (admin)</button>`;
+                addBtn('Delete permanently (admin)', () => deleteChatMessage(messageId), 'danger');
             }
-            menu.innerHTML = html;
             menu.style.display = 'block';
             menu.style.left = Math.max(8, x) + 'px';
             menu.style.top = Math.max(8, y) + 'px';
         }
 
-        function replyToContextMessage() {
-            if (!chatContextMessageId) return;
-            setReplyTo(chatContextMessageId);
+        function replyToContextMessage(messageId) {
+            const id = messageId || chatContextMessageId;
+            if (!id) return;
+            setReplyTo(id);
         }
 
         function hideChatContextMenu() {
@@ -2899,10 +3224,10 @@
             chatContextMessageId = null;
         }
 
-        async function deleteChatMessage() {
-            if (!chatContextMessageId) return;
-            const messageId = chatContextMessageId;
-            const msg = chatMessages.find(m => m.id === messageId);
+        async function deleteChatMessage(messageId) {
+            const id = messageId || chatContextMessageId;
+            if (!id) return;
+            const msg = chatMessages.find(m => m.id === id);
             hideChatContextMenu();
             const isOwn = activeUser && msg?.sender_id === activeUser.id;
             const isAdmin = canManageUsers();
@@ -2914,13 +3239,15 @@
                 ? 'Permanently delete this message? This cannot be undone.'
                 : 'Permanently delete this message as admin? This cannot be undone.';
             if (!confirm(confirmText)) return;
-            const { error } = await saudiaClient.from('chat_messages').delete().eq('id', messageId);
+            const { error } = await saudiaClient.from('chat_messages').delete().eq('id', id);
             if (error) {
                 console.warn('Unable to delete chat message:', error);
                 alert('Unable to delete message.');
                 return;
             }
-            chatMessages = chatMessages.filter(m => m.id !== messageId);
+            chatMessages = chatMessages.filter(m => m.id !== id);
+            chatSelectedMessageIds.delete(id);
+            updateChatBulkBar();
             renderChatMessages();
         }
 
@@ -2933,6 +3260,13 @@
             }
             if (emojiPicker && emojiPicker.style.display === 'block' && !emojiPicker.contains(ev.target) && ev.target !== emojiBtn) {
                 hideEmojiPicker();
+            }
+        });
+
+        document.addEventListener('contextmenu', (ev) => {
+            const menu = document.getElementById('chatContextMenu');
+            if (menu && menu.style.display === 'block' && !menu.contains(ev.target)) {
+                hideChatContextMenu();
             }
         });
 
@@ -3082,6 +3416,10 @@
             closeAccountMenu();
             disconnectChatChannel();
             stopChatPolling();
+            chatBulkSelectMode = false;
+            chatSelectedMessageIds.clear();
+            chatForwardMessageId = null;
+            replyToMessageId = null;
             await saudiaClient.auth.signOut();
             activeUser = null;
             activeProfile = null;
