@@ -270,6 +270,7 @@
             right: 18px;
             bottom: 18px;
             width: min(420px, calc(100% - 32px));
+            height: min(560px, 80vh);
             max-height: 80vh;
             background: var(--card-bg);
             border-radius: 18px;
@@ -278,6 +279,13 @@
             flex-direction: column;
             overflow: hidden;
             z-index: 9999;
+        }
+        .chat-main {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            position: relative;
         }
         .chat-panel.active { display: flex; }
         .chat-header {
@@ -299,6 +307,7 @@
         }
         .chat-body {
             flex: 1 1 auto;
+            min-height: 0;
             padding: 12px;
             overflow-y: auto;
             display: flex;
@@ -312,6 +321,20 @@
             max-width: 100%;
             word-break: break-word;
             box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
+            font-size: 13px;
+            line-height: 1.45;
+            position: relative;
+        }
+        .chat-message .chat-text {
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        .chat-message .chat-reply-snippet {
+            font-size: 11px;
+            color: var(--muted-text);
+            margin-bottom: 6px;
+            padding-left: 8px;
+            border-left: 2px solid rgba(0,144,0,0.25);
         }
         .chat-message.self { background: rgba(0,144,0,0.1); align-self: flex-end; }
         .chat-message .chat-meta {
@@ -324,7 +347,7 @@
             color: var(--islamic-green);
             margin-bottom: 6px;
         }
-        .chat-hint { font-size: 11px; color: var(--muted-text); padding: 0 14px 8px; }
+        .chat-hint { font-size: 11px; color: var(--muted-text); padding: 0 14px 6px; flex-shrink: 0; }
         .chat-input-row {
             display: flex;
             gap: 10px;
@@ -350,15 +373,21 @@
             cursor: pointer;
         }
         .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .chat-status { font-size: 11px; color: var(--muted-text); padding: 0 14px 10px; }
+        .chat-status { font-size: 11px; color: var(--muted-text); padding: 6px 14px 4px; flex-shrink: 0; }
         .chat-members-panel {
-            padding: 8px 12px; 
-            border-top: 1px solid rgba(0,0,0,0.04);
+            position: absolute;
+            inset: 0;
+            z-index: 6;
+            padding: 10px 12px;
             background: var(--card-bg);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
         }
-        .chat-members-header { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
-        .chat-members-header input { flex:1 1 auto; padding:6px 8px; border-radius:8px; border:1px solid var(--input-border); }
-        .chat-members-list { max-height:200px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+        .chat-members-panel.open { display: flex; }
+        .chat-members-header { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-shrink: 0; }
+        .chat-members-header input { flex:1 1 auto; padding:6px 8px; border-radius:8px; border:1px solid var(--input-border); font-size: 13px; }
+        .chat-members-list { flex: 1 1 auto; min-height: 0; overflow: auto; display:flex; flex-direction:column; gap:6px; }
         .chat-member-item { display:flex; align-items:center; gap:8px; padding:6px; border-radius:8px; cursor:pointer; }
         .chat-member-item:hover { background: rgba(0,0,0,0.03); }
         .chat-member-avatar { width:34px; height:34px; border-radius:50%; background:var(--islamic-green); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; }
@@ -381,10 +410,10 @@
         .chat-autocomplete .auto-item .auto-avatar { width:30px; height:30px; border-radius:50%; background:var(--islamic-green); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; }
         .chat-reply-box { font-size:13px; }
         .chat-message.reply-highlight { box-shadow: 0 0 0 2px rgba(0,144,0,0.06); }
-        .chat-message { position: relative; }
-        .chat-message:hover { background: rgba(0,0,0,0.02); }
+        .chat-message:not(.self):hover { background: rgba(0,0,0,0.02); }
         .chat-context-menu {
-            min-width: 160px;
+            position: fixed;
+            min-width: 180px;
             background: var(--card-bg);
             border: 1px solid rgba(0,0,0,0.12);
             box-shadow: 0 8px 24px rgba(0,0,0,0.12);
@@ -402,6 +431,8 @@
             font-size: 13px;
         }
         .chat-context-menu button:hover { background: rgba(0,0,0,0.04); }
+        .chat-context-menu button.danger { color: #b00020; }
+        .chat-context-menu button.danger:hover { background: rgba(176,0,32,0.06); }
         .chat-emoji-btn {
             border: 1px solid var(--input-border);
             background: var(--card-bg);
@@ -1142,26 +1173,28 @@
             <div class="chat-header">
                     <h3>Team Chat</h3>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <button id="chatMembersBtn" class="mini-btn" onclick="toggleMembersPanel()" title="View members">Members</button>
+                        <button id="chatMembersBtn" class="mini-btn" onclick="toggleMembersPanel()" title="View all members">Members</button>
                         <span id="chatPrivateIndicator" style="display:none; margin-right:8px; font-size:12px; color:var(--islamic-green);">Direct: <strong id="chatPrivateName"></strong> <button class="mini-btn alt" onclick="closePrivateChat()">Close</button></span>
                         <button class="chat-close-btn" onclick="toggleChatPanel()" aria-label="Close chat">×</button>
                     </div>
                 </div>
-            <div id="chatStatus" class="chat-status">Loading messages…</div>
-            <div class="chat-hint">Use @name or @role to target messages privately. Example: @admin or @mohamed</div>
-            <div id="chatMembersPanel" class="chat-members-panel" style="display:none;">
-                <div class="chat-members-header">
-                    <input id="chatMemberSearch" placeholder="Search members..." oninput="renderMembersList(this.value)" />
-                    <button class="mini-btn alt" onclick="renderMembersList()">Refresh</button>
+            <div class="chat-main">
+                <div id="chatStatus" class="chat-status">Loading messages…</div>
+                <div class="chat-hint">Double-click, swipe right, or right-click a message to reply. Use @name or @role for private messages.</div>
+                <div id="chatBody" class="chat-body"></div>
+                <div id="chatMembersPanel" class="chat-members-panel">
+                    <div class="chat-members-header">
+                        <input id="chatMemberSearch" placeholder="Search members..." oninput="renderMembersList(this.value)" />
+                        <button class="mini-btn alt" onclick="refreshMembersList()">Refresh</button>
+                        <button class="mini-btn alt" onclick="toggleMembersPanel()">Close</button>
+                    </div>
+                    <div id="chatMembersList" class="chat-members-list"></div>
                 </div>
-                <div id="chatMembersList" class="chat-members-list"></div>
             </div>
-            <div id="chatBody" class="chat-body"></div>
             <div id="chatReplyBox" class="chat-reply-box" style="display:none; padding:8px 12px; background:var(--surface-3); border-top:1px solid rgba(0,0,0,0.04);">
                 Replying to <span id="chatReplyName" style="font-weight:600"></span>: <span id="chatReplySnippet" style="margin-left:8px;color:var(--muted-text)"></span>
                 <button class="mini-btn alt" style="margin-left:12px;" onclick="cancelReply()">Cancel</button>
             </div>
-            <div id="chatContextMenu" class="chat-context-menu" style="display:none; position:absolute;"></div>
             <div class="chat-input-row">
                 <button id="chatEmojiBtn" class="chat-emoji-btn" type="button" onclick="toggleEmojiPicker()" title="Add emoji">😊</button>
                 <input id="chatMessageInput" type="text" placeholder="Write a message..." oninput="handleChatInput(this, event)" onkeydown="handleChatKeydown(this, event)">
@@ -1170,6 +1203,7 @@
                 <div id="chatAutocomplete" class="chat-autocomplete" role="listbox" aria-hidden="true"></div>
             </div>
         </div>
+        <div id="chatContextMenu" class="chat-context-menu" style="display:none;"></div>
 
         <!-- PREVIEW PANE -->
         <div id="previewPane" class="preview-pane">
@@ -1940,14 +1974,28 @@
                     user_role: getProfileRole(activeProfile)
                 });
             }
+            updateMembersBtnCount();
         }
 
-        function toggleMembersPanel() {
+        function updateMembersBtnCount() {
+            const btn = document.getElementById('chatMembersBtn');
+            if (!btn) return;
+            const count = (chatProfiles || []).length;
+            btn.textContent = count ? `Members (${count})` : 'Members';
+        }
+
+        async function refreshMembersList() {
+            await loadChatProfiles();
+            renderMembersList();
+        }
+
+        async function toggleMembersPanel() {
             const panel = document.getElementById('chatMembersPanel');
             if (!panel) return;
-            const open = panel.style.display !== 'block';
-            panel.style.display = open ? 'block' : 'none';
+            const open = !panel.classList.contains('open');
+            panel.classList.toggle('open', open);
             if (open) {
+                await loadChatProfiles();
                 renderMembersList();
                 const input = document.getElementById('chatMemberSearch');
                 if (input) input.focus();
@@ -1965,6 +2013,10 @@
                 return name.includes(q) || email.includes(q);
             });
             listEl.innerHTML = '';
+            if (!items.length) {
+                listEl.innerHTML = '<div style="padding:12px;color:var(--muted-text);font-size:13px;">No members found. Try Refresh — all registered accounts should appear here.</div>';
+                return;
+            }
             items.forEach(p => {
                 const el = document.createElement('div');
                 el.className = 'chat-member-item';
@@ -1993,7 +2045,7 @@
             }
             // ensure members panel closes after selection
             const panel = document.getElementById('chatMembersPanel');
-            if (panel) panel.style.display = 'none';
+            if (panel) panel.classList.remove('open');
             // open direct conversation view
             openPrivateChatWith(userId);
         }
@@ -2041,7 +2093,7 @@
             setChatStatus('Loading conversation…');
             const { data, error } = await saudiaClient
                 .from('chat_messages')
-                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, created_at')
+                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, reply_to, created_at')
                 .order('created_at', { ascending: true })
                 .limit(1000);
             if (error) {
@@ -2224,23 +2276,19 @@
                     if (parent) {
                         const pName = escapeHtml(parent.sender_name || 'Unknown');
                         const snippet = escapeHtml((parent.message || '').slice(0, 120));
-                        replyHtml = `<div style="font-size:12px; color:var(--muted-text); margin-bottom:6px;">In reply to <strong>${pName}</strong>: ${snippet}</div>`;
+                        replyHtml = `<div class="chat-reply-snippet">In reply to <strong>${pName}</strong>: ${snippet}</div>`;
                     }
                 }
                 wrapper.innerHTML = `
                     <div class="chat-meta">${senderName} · ${timestamp}</div>
                     ${targetSummary ? `<div class="chat-target">${escapeHtml(targetSummary)}</div>` : ''}
                     ${replyHtml}
-                    <div>${escapeHtml(msg.message)}</div>
+                    <div class="chat-text">${escapeHtml(msg.message)}</div>
                 `;
                 wrapper.addEventListener('dblclick', () => setReplyTo(msg.id));
                 wrapper.addEventListener('contextmenu', (ev) => {
                     ev.preventDefault();
-                    if (activeUser && msg.sender_id === activeUser.id) {
-                        showChatContextMenu(ev.pageX, ev.pageY, msg.id);
-                    } else {
-                        hideChatContextMenu();
-                    }
+                    showChatContextMenu(ev.clientX, ev.clientY, msg.id);
                 });
                 let touchStartX = 0;
                 let touchStartY = 0;
@@ -2317,7 +2365,7 @@
 
             const { data, error } = await saudiaClient
                 .from('chat_messages')
-                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, created_at')
+                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, reply_to, created_at')
                 .order('created_at', { ascending: true })
                 .limit(100);
 
@@ -2426,13 +2474,26 @@
         function showChatContextMenu(x, y, messageId) {
             const menu = document.getElementById('chatContextMenu');
             if (!menu) return;
+            const msg = chatMessages.find(m => m.id === messageId);
+            if (!msg) return;
             chatContextMessageId = messageId;
-            menu.innerHTML = `
-                <button type="button" onclick="deleteChatMessage()">Delete message</button>
-            `;
+            const isOwn = activeUser && msg.sender_id === activeUser.id;
+            const isAdmin = canManageUsers();
+            let html = `<button type="button" onclick="replyToContextMessage()">Reply</button>`;
+            if (isOwn) {
+                html += `<button type="button" class="danger" onclick="deleteChatMessage()">Delete permanently</button>`;
+            } else if (isAdmin) {
+                html += `<button type="button" class="danger" onclick="deleteChatMessage()">Delete permanently (admin)</button>`;
+            }
+            menu.innerHTML = html;
             menu.style.display = 'block';
-            menu.style.left = x + 'px';
-            menu.style.top = y + 'px';
+            menu.style.left = Math.max(8, x) + 'px';
+            menu.style.top = Math.max(8, y) + 'px';
+        }
+
+        function replyToContextMessage() {
+            if (!chatContextMessageId) return;
+            setReplyTo(chatContextMessageId);
         }
 
         function hideChatContextMenu() {
@@ -2445,7 +2506,18 @@
         async function deleteChatMessage() {
             if (!chatContextMessageId) return;
             const messageId = chatContextMessageId;
+            const msg = chatMessages.find(m => m.id === messageId);
             hideChatContextMenu();
+            const isOwn = activeUser && msg?.sender_id === activeUser.id;
+            const isAdmin = canManageUsers();
+            if (!isOwn && !isAdmin) {
+                alert('You do not have permission to delete this message.');
+                return;
+            }
+            const confirmText = isOwn
+                ? 'Permanently delete this message? This cannot be undone.'
+                : 'Permanently delete this message as admin? This cannot be undone.';
+            if (!confirm(confirmText)) return;
             const { error } = await saudiaClient.from('chat_messages').delete().eq('id', messageId);
             if (error) {
                 console.warn('Unable to delete chat message:', error);
