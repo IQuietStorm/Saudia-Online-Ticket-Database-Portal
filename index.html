@@ -2748,12 +2748,18 @@
             // attach reply id if replying
             if (replyToMessageId) payload.reply_to = replyToMessageId;
 
-            const { error } = await saudiaClient.from('chat_messages').insert([payload]);
+            const { data, error } = await saudiaClient.from('chat_messages').insert([payload]).select();
             btn.disabled = false;
             if (error) {
                 console.warn('Unable to send chat message:', error);
                 alert('Unable to send message.');
                 return;
+            }
+            // Add message locally so it appears immediately
+            if (Array.isArray(data) && data.length > 0) {
+                const sentMsg = data[0];
+                chatMessages.push(sentMsg);
+                renderChatMessages();
             }
             input.value = '';
             input.focus();
