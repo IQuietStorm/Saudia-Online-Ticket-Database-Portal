@@ -1849,13 +1849,26 @@
         }
 
         async function loadChatProfiles() {
-            const { data, error } = await saudiaClient
-                .from('profiles')
-                .select('id, full_name, email, role, user_role')
-                .limit(500);
-            if (!error && Array.isArray(data)) {
-                chatProfiles = data;
+            // load all profiles in pages to include every account as a chat member
+            const pageSize = SUPABASE_PAGE_SIZE || 1000;
+            let from = 0;
+            let all = [];
+            while (true) {
+                const to = from + pageSize - 1;
+                const { data, error } = await saudiaClient
+                    .from('profiles')
+                    .select('id, full_name, email, role, user_role')
+                    .range(from, to);
+                if (error) {
+                    console.warn('Failed to load profiles page', from, to, error);
+                    break;
+                }
+                if (!data || !data.length) break;
+                all = all.concat(data);
+                if (data.length < pageSize) break;
+                from += pageSize;
             }
+            chatProfiles = all;
             if (activeUser && activeProfile && !chatProfiles.some(p => p.id === activeUser.id)) {
                 chatProfiles.push({
                     id: activeUser.id,
