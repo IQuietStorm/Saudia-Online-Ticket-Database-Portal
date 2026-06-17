@@ -263,13 +263,50 @@
             border: none;
             cursor: pointer;
             transition: transform 0.12s ease, filter 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            position: relative;
+        }
+        .chat-open-btn.has-unread { animation: chat-pulse 2s ease-in-out infinite; }
+        @keyframes chat-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(0, 144, 0, 0.35); }
+            50% { box-shadow: 0 0 0 6px rgba(0, 144, 0, 0); }
+        }
+        .chat-header-badge {
+            position: absolute;
+            top: -6px;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 999px;
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 18px;
+            text-align: center;
+            display: none;
+        }
+        .chat-msg-badge { right: -4px; background: #c45a00; }
+        .chat-alert-badge { right: 18px; background: var(--islamic-green); }
+        .chat-member-unread {
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 999px;
+            background: #c45a00;
+            color: #fff;
+            font-size: 10px;
+            line-height: 18px;
+            text-align: center;
+            margin-left: 4px;
         }
         .chat-open-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
         .chat-panel {
             position: fixed;
             right: 18px;
             bottom: 18px;
-            width: min(420px, calc(100% - 32px));
+            width: min(520px, calc(100% - 32px));
             height: min(560px, 80vh);
             max-height: 80vh;
             background: var(--card-bg);
@@ -279,6 +316,80 @@
             flex-direction: column;
             overflow: hidden;
             z-index: 9999;
+        }
+        .chat-layout {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            overflow: hidden;
+        }
+        .chat-threads-sidebar {
+            width: 108px;
+            flex-shrink: 0;
+            border-right: 1px solid rgba(0,0,0,0.08);
+            background: var(--surface-3);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px 6px;
+        }
+        .chat-thread-btn {
+            display: block;
+            width: 100%;
+            padding: 8px 6px;
+            border: none;
+            border-radius: 10px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 11px;
+            text-align: left;
+            color: var(--text-main);
+            position: relative;
+            line-height: 1.3;
+        }
+        .chat-thread-btn:hover { background: rgba(0,0,0,0.04); }
+        .chat-thread-btn.active { background: rgba(0,144,0,0.12); font-weight: 600; }
+        .chat-thread-btn .thread-label {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding-right: 18px;
+        }
+        .chat-thread-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 999px;
+            background: var(--islamic-green);
+            color: #fff;
+            font-size: 10px;
+            line-height: 16px;
+            text-align: center;
+            display: none;
+        }
+        .chat-thread-close {
+            position: absolute;
+            bottom: 2px;
+            right: 4px;
+            font-size: 10px;
+            color: var(--muted-text);
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        .chat-conversation {
+            flex: 1 1 auto;
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
         }
         .chat-main {
             flex: 1 1 auto;
@@ -871,9 +982,9 @@
                         <button id="layout-toggle" class="mini-btn alt" onclick="toggleLayout()" data-i18n="ui.mobileView">Mobile View</button>
                         <button id="chat-open-btn" class="chat-open-btn" onclick="toggleChatPanel()" title="Open chat">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10z" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                            <span id="chatBell" style="position:relative; margin-left:6px; display:inline-block;">
-                                <span id="chatBellCount" style="display:none; position:absolute; top:-8px; right:-10px; background:var(--islamic-green); color:white; font-size:11px; padding:2px 6px; border-radius:999px;">0</span>
-                            </span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+                            <span id="chatMsgCount" class="chat-header-badge chat-msg-badge">0</span>
+                            <span id="chatBellCount" class="chat-header-badge chat-alert-badge">0</span>
                         </button>
                 </div>
                 <div class="account-menu" id="account-menu">
@@ -1170,37 +1281,41 @@
 
         <!-- Chat Panel -->
         <div id="chatPanel" class="chat-panel" role="dialog" aria-label="User chat">
-            <div class="chat-header">
-                    <h3>Team Chat</h3>
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <button id="chatMembersBtn" class="mini-btn" onclick="toggleMembersPanel()" title="View all members">Members</button>
-                        <span id="chatPrivateIndicator" style="display:none; margin-right:8px; font-size:12px; color:var(--islamic-green);">Direct: <strong id="chatPrivateName"></strong> <button class="mini-btn alt" onclick="closePrivateChat()">Close</button></span>
-                        <button class="chat-close-btn" onclick="toggleChatPanel()" aria-label="Close chat">×</button>
+            <div class="chat-layout">
+                <div id="chatThreadsSidebar" class="chat-threads-sidebar" aria-label="Chat threads"></div>
+                <div class="chat-conversation">
+                    <div class="chat-header">
+                        <h3 id="chatThreadTitle">Team Chat</h3>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <button id="chatMembersBtn" class="mini-btn" onclick="toggleMembersPanel()" title="View all members">Members</button>
+                            <button class="chat-close-btn" onclick="toggleChatPanel()" aria-label="Close chat">×</button>
+                        </div>
+                    </div>
+                    <div class="chat-main">
+                        <div id="chatStatus" class="chat-status">Loading messages…</div>
+                        <div class="chat-hint">Select a member for a private chatbox. Double-click or right-click a message to reply.</div>
+                        <div id="chatBody" class="chat-body"></div>
+                        <div id="chatMembersPanel" class="chat-members-panel">
+                            <div class="chat-members-header">
+                                <input id="chatMemberSearch" placeholder="Search members..." oninput="renderMembersList(this.value)" />
+                                <button class="mini-btn alt" onclick="refreshMembersList()">Refresh</button>
+                                <button class="mini-btn alt" onclick="toggleMembersPanel()">Close</button>
+                            </div>
+                            <div id="chatMembersList" class="chat-members-list"></div>
+                        </div>
+                    </div>
+                    <div id="chatReplyBox" class="chat-reply-box" style="display:none; padding:8px 12px; background:var(--surface-3); border-top:1px solid rgba(0,0,0,0.04);">
+                        Replying to <span id="chatReplyName" style="font-weight:600"></span>: <span id="chatReplySnippet" style="margin-left:8px;color:var(--muted-text)"></span>
+                        <button class="mini-btn alt" style="margin-left:12px;" onclick="cancelReply()">Cancel</button>
+                    </div>
+                    <div class="chat-input-row">
+                        <button id="chatEmojiBtn" class="chat-emoji-btn" type="button" onclick="toggleEmojiPicker()" title="Add emoji">😊</button>
+                        <input id="chatMessageInput" type="text" placeholder="Write a message..." oninput="handleChatInput(this, event)" onkeydown="handleChatKeydown(this, event)">
+                        <button id="chatSendBtn" class="chat-send-btn" onclick="sendChatMessage()">Send</button>
+                        <div id="chatEmojiPicker" class="chat-emoji-picker" aria-hidden="true" style="display:none;"></div>
+                        <div id="chatAutocomplete" class="chat-autocomplete" role="listbox" aria-hidden="true"></div>
                     </div>
                 </div>
-            <div class="chat-main">
-                <div id="chatStatus" class="chat-status">Loading messages…</div>
-                <div class="chat-hint">Double-click, swipe right, or right-click a message to reply. Use @name or @role for private messages.</div>
-                <div id="chatBody" class="chat-body"></div>
-                <div id="chatMembersPanel" class="chat-members-panel">
-                    <div class="chat-members-header">
-                        <input id="chatMemberSearch" placeholder="Search members..." oninput="renderMembersList(this.value)" />
-                        <button class="mini-btn alt" onclick="refreshMembersList()">Refresh</button>
-                        <button class="mini-btn alt" onclick="toggleMembersPanel()">Close</button>
-                    </div>
-                    <div id="chatMembersList" class="chat-members-list"></div>
-                </div>
-            </div>
-            <div id="chatReplyBox" class="chat-reply-box" style="display:none; padding:8px 12px; background:var(--surface-3); border-top:1px solid rgba(0,0,0,0.04);">
-                Replying to <span id="chatReplyName" style="font-weight:600"></span>: <span id="chatReplySnippet" style="margin-left:8px;color:var(--muted-text)"></span>
-                <button class="mini-btn alt" style="margin-left:12px;" onclick="cancelReply()">Cancel</button>
-            </div>
-            <div class="chat-input-row">
-                <button id="chatEmojiBtn" class="chat-emoji-btn" type="button" onclick="toggleEmojiPicker()" title="Add emoji">😊</button>
-                <input id="chatMessageInput" type="text" placeholder="Write a message..." oninput="handleChatInput(this, event)" onkeydown="handleChatKeydown(this, event)">
-                <button id="chatSendBtn" class="chat-send-btn" onclick="sendChatMessage()">Send</button>
-                <div id="chatEmojiPicker" class="chat-emoji-picker" aria-hidden="true" style="display:none;"></div>
-                <div id="chatAutocomplete" class="chat-autocomplete" role="listbox" aria-hidden="true"></div>
             </div>
         </div>
         <div id="chatContextMenu" class="chat-context-menu" style="display:none;"></div>
@@ -1257,26 +1372,268 @@
         let chatChannel = null;
         let chatMessages = [];
         let chatProfiles = [];
-        let activePrivateChatUserId = null;
+        let activeChatThreadId = 'team';
+        let openChatThreads = { team: true };
+        let chatThreadUnread = { team: { msgs: 0, alerts: 0 } };
+        let chatLastRead = { team: 0 };
         let replyToMessageId = null;
-        let notificationCount = 0;
         let chatContextMessageId = null;
         const emojiList = ['😀','😄','😅','😊','😍','😎','😡','😭','👍','🎉','❤️','🙏','🤝','💬','🤩'];
 
-        function setNotificationCount(n) {
-            notificationCount = Math.max(0, Number(n) || 0);
-            const el = document.getElementById('chatBellCount');
-            if (!el) return;
-            if (notificationCount > 0) { el.style.display = 'inline-block'; el.textContent = String(notificationCount); }
-            else { el.style.display = 'none'; }
+        function getChatReadStorageKey() {
+            return activeUser?.id ? `tms_chat_last_read_${activeUser.id}` : null;
         }
 
-        function incrementNotification() {
-            setNotificationCount(notificationCount + 1);
+        function loadChatLastRead() {
+            const key = getChatReadStorageKey();
+            if (!key) return;
+            try {
+                const raw = localStorage.getItem(key);
+                chatLastRead = raw ? JSON.parse(raw) : { team: 0 };
+            } catch (e) {
+                chatLastRead = { team: 0 };
+            }
         }
 
-        function clearNotifications() {
-            setNotificationCount(0);
+        function saveChatLastRead() {
+            const key = getChatReadStorageKey();
+            if (!key) return;
+            try { localStorage.setItem(key, JSON.stringify(chatLastRead)); } catch (e) { /* ignore */ }
+        }
+
+        function ensureThreadUnread(threadId) {
+            if (!chatThreadUnread[threadId]) chatThreadUnread[threadId] = { msgs: 0, alerts: 0 };
+            return chatThreadUnread[threadId];
+        }
+
+        function getTotalChatMsgUnread() {
+            return Object.values(chatThreadUnread).reduce((sum, t) => sum + (t.msgs || 0), 0);
+        }
+
+        function getTotalChatAlertUnread() {
+            return Object.values(chatThreadUnread).reduce((sum, t) => sum + (t.alerts || 0), 0);
+        }
+
+        function updateChatBadges() {
+            const msgEl = document.getElementById('chatMsgCount');
+            const bellEl = document.getElementById('chatBellCount');
+            const openBtn = document.getElementById('chat-open-btn');
+            const msgTotal = getTotalChatMsgUnread();
+            const alertTotal = getTotalChatAlertUnread();
+            if (msgEl) {
+                if (msgTotal > 0) {
+                    msgEl.style.display = 'inline-block';
+                    msgEl.textContent = msgTotal > 99 ? '99+' : String(msgTotal);
+                    msgEl.title = `${msgTotal} unread message${msgTotal === 1 ? '' : 's'}`;
+                } else {
+                    msgEl.style.display = 'none';
+                }
+            }
+            if (bellEl) {
+                if (alertTotal > 0) {
+                    bellEl.style.display = 'inline-block';
+                    bellEl.textContent = alertTotal > 99 ? '99+' : String(alertTotal);
+                    bellEl.title = `${alertTotal} mention${alertTotal === 1 ? '' : 's'} or repl${alertTotal === 1 ? 'y' : 'ies'}`;
+                } else {
+                    bellEl.style.display = 'none';
+                }
+            }
+            if (openBtn) {
+                openBtn.classList.toggle('has-unread', msgTotal > 0 || alertTotal > 0);
+                openBtn.title = msgTotal || alertTotal
+                    ? `Chat (${msgTotal} unread, ${alertTotal} mention/reply alert${alertTotal === 1 ? '' : 's'})`
+                    : 'Open chat';
+            }
+            renderChatThreadsList();
+        }
+
+        function isChatPanelOpen() {
+            const panel = document.getElementById('chatPanel');
+            return panel && panel.classList.contains('active');
+        }
+
+        function getMessageThreadKey(msg) {
+            if (!msg || !activeUser?.id) return null;
+            const me = activeUser.id;
+            const recIds = Array.isArray(msg.recipient_ids) ? msg.recipient_ids : [];
+            const recRoles = Array.isArray(msg.recipient_roles) ? msg.recipient_roles : [];
+
+            if (!msg.is_private) return 'team';
+            if (recRoles.length && recIds.length === 0) return 'team';
+
+            if (msg.is_private && recIds.length) {
+                if (msg.sender_id === me) {
+                    const peer = recIds.find(id => id !== me);
+                    return peer || null;
+                }
+                if (recIds.includes(me)) return msg.sender_id;
+            }
+            return null;
+        }
+
+        function isTeamMessage(msg) {
+            if (!msg) return false;
+            if (!msg.is_private) return true;
+            const recRoles = Array.isArray(msg.recipient_roles) ? msg.recipient_roles : [];
+            const recIds = Array.isArray(msg.recipient_ids) ? msg.recipient_ids : [];
+            return recRoles.length > 0 && recIds.length === 0;
+        }
+
+        function isDmMessage(msg, otherId) {
+            if (!msg || !otherId || !activeUser?.id) return false;
+            if (!msg.is_private) return false;
+            const me = activeUser.id;
+            const recIds = Array.isArray(msg.recipient_ids) ? msg.recipient_ids : [];
+            const peerInvolved = msg.sender_id === otherId || recIds.includes(otherId);
+            const meInvolved = msg.sender_id === me || recIds.includes(me);
+            return peerInvolved && meInvolved;
+        }
+
+        function isAlertForMe(msg) {
+            if (!msg || msg.sender_id === activeUser?.id) return false;
+            const me = activeUser?.id;
+            if (!me) return false;
+            const myRole = getProfileRole(activeProfile);
+            const recIds = Array.isArray(msg.recipient_ids) ? msg.recipient_ids : [];
+            const recRoles = Array.isArray(msg.recipient_roles) ? msg.recipient_roles : [];
+            if (recIds.includes(me)) return true;
+            if (recRoles.includes(myRole)) return true;
+            if (msg.reply_to) {
+                const parent = chatMessages.find(m => m.id === msg.reply_to);
+                if (parent && parent.sender_id === me) return true;
+            }
+            const mentions = extractChatMentions(msg.message || '');
+            if (mentions.recipient_ids && mentions.recipient_ids.includes(me)) return true;
+            if (mentions.recipient_roles && mentions.recipient_roles.includes(myRole)) return true;
+            return false;
+        }
+
+        function shouldCountUnreadForMessage(msg) {
+            if (!msg || msg.sender_id === activeUser?.id) return false;
+            return !!getMessageThreadKey(msg);
+        }
+
+        function bumpThreadUnread(threadId, { message = false, alert = false } = {}) {
+            if (!threadId) return;
+            if (threadId !== 'team') openChatThreads[threadId] = true;
+            const bucket = ensureThreadUnread(threadId);
+            if (message) bucket.msgs += 1;
+            if (alert) bucket.alerts += 1;
+            updateChatBadges();
+        }
+
+        function markThreadRead(threadId) {
+            if (!threadId) return;
+            ensureThreadUnread(threadId);
+            chatThreadUnread[threadId] = { msgs: 0, alerts: 0 };
+            chatLastRead[threadId] = Date.now();
+            saveChatLastRead();
+            updateChatBadges();
+            renderMembersList();
+        }
+
+        function computeUnreadFromMessages() {
+            if (!activeUser?.id) return;
+            chatThreadUnread = { team: { msgs: 0, alerts: 0 } };
+            (chatMessages || []).forEach(msg => {
+                if (!shouldCountUnreadForMessage(msg)) return;
+                const threadId = getMessageThreadKey(msg);
+                if (!threadId) return;
+                const lastRead = chatLastRead[threadId] || 0;
+                const ts = Date.parse(msg.created_at || '');
+                if (Number.isNaN(ts) || ts <= lastRead) return;
+                if (threadId !== 'team') openChatThreads[threadId] = true;
+                const bucket = ensureThreadUnread(threadId);
+                bucket.msgs += 1;
+                if (isAlertForMe(msg)) bucket.alerts += 1;
+            });
+            updateChatBadges();
+        }
+
+        function getThreadLabel(threadId) {
+            if (threadId === 'team') return 'Team';
+            const profile = chatProfiles.find(p => p.id === threadId);
+            const name = profile ? getProfileDisplayName(profile) : 'Member';
+            return name.split(/\s+/)[0] || name;
+        }
+
+        function updateChatThreadTitle() {
+            const titleEl = document.getElementById('chatThreadTitle');
+            const input = document.getElementById('chatMessageInput');
+            if (!titleEl) return;
+            if (activeChatThreadId === 'team') {
+                titleEl.textContent = 'Team Chat';
+                if (input) input.placeholder = 'Message the team…';
+            } else {
+                const profile = chatProfiles.find(p => p.id === activeChatThreadId);
+                const name = profile ? getProfileDisplayName(profile) : 'Member';
+                titleEl.textContent = `Chat with ${name}`;
+                if (input) input.placeholder = `Message ${name}…`;
+            }
+        }
+
+        function renderChatThreadsList() {
+            const sidebar = document.getElementById('chatThreadsSidebar');
+            if (!sidebar) return;
+            sidebar.innerHTML = '';
+            const threadIds = ['team'].concat(
+                Object.keys(openChatThreads).filter(id => id !== 'team')
+            );
+            threadIds.forEach(threadId => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'chat-thread-btn' + (activeChatThreadId === threadId ? ' active' : '');
+                const unread = chatThreadUnread[threadId] || { msgs: 0, alerts: 0 };
+                const badgeCount = (unread.msgs || 0) + (unread.alerts || 0);
+                btn.innerHTML = `
+                    <span class="thread-label">${escapeHtml(getThreadLabel(threadId))}</span>
+                    <span class="chat-thread-badge" style="${badgeCount ? 'display:block' : ''}">${badgeCount > 99 ? '99+' : badgeCount}</span>
+                `;
+                btn.addEventListener('click', () => switchChatThread(threadId));
+                if (threadId !== 'team') {
+                    const closeBtn = document.createElement('button');
+                    closeBtn.type = 'button';
+                    closeBtn.className = 'chat-thread-close';
+                    closeBtn.textContent = '×';
+                    closeBtn.title = 'Close chat';
+                    closeBtn.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        closeDmThread(threadId);
+                    });
+                    btn.appendChild(closeBtn);
+                }
+                sidebar.appendChild(btn);
+            });
+        }
+
+        function switchChatThread(threadId) {
+            if (!threadId) return;
+            activeChatThreadId = threadId;
+            openChatThreads[threadId] = true;
+            cancelReply();
+            updateChatThreadTitle();
+            renderChatMessages();
+            if (isChatPanelOpen()) markThreadRead(threadId);
+            renderChatThreadsList();
+            const membersPanel = document.getElementById('chatMembersPanel');
+            if (membersPanel) membersPanel.classList.remove('open');
+        }
+
+        function openDmThread(userId) {
+            if (!userId || userId === activeUser?.id) return;
+            openChatThreads[userId] = true;
+            switchChatThread(userId);
+            const panel = document.getElementById('chatPanel');
+            if (panel && !panel.classList.contains('active')) toggleChatPanel();
+        }
+
+        function closeDmThread(userId) {
+            if (!userId || userId === 'team') return;
+            delete openChatThreads[userId];
+            delete chatThreadUnread[userId];
+            if (activeChatThreadId === userId) switchChatThread('team');
+            else renderChatThreadsList();
+            updateChatBadges();
         }
         const TICKETS_PER_PAGE = 100;
         /** Supabase/PostgREST max rows per request without .range() */
@@ -1870,7 +2227,7 @@
             const opening = !panel.classList.contains('active');
             panel.classList.toggle('active');
             if (opening) {
-                clearNotifications();
+                markThreadRead(activeChatThreadId);
                 const input = document.getElementById('chatMessageInput');
                 if (input) input.focus();
             }
@@ -2063,93 +2420,30 @@
                 return;
             }
             items.forEach(p => {
+                const unread = chatThreadUnread[p.id] || { msgs: 0, alerts: 0 };
+                const unreadTotal = (unread.msgs || 0) + (unread.alerts || 0);
+                const isSelf = activeUser && p.id === activeUser.id;
                 const el = document.createElement('div');
                 el.className = 'chat-member-item';
                 el.innerHTML = `
                     <div class="chat-member-avatar">${escapeHtml(getAccountInitials(getProfileDisplayName(p), p.email))}</div>
                     <div style="flex:1;">
-                        <div style="font-weight:600">${escapeHtml(getProfileDisplayName(p))}</div>
+                        <div style="font-weight:600">${escapeHtml(getProfileDisplayName(p))}${unreadTotal ? `<span class="chat-member-unread">${unreadTotal > 99 ? '99+' : unreadTotal}</span>` : ''}</div>
                         <div style="font-size:12px; color:var(--muted-text)">${escapeHtml(p.email || '')} · ${escapeHtml(getProfileRole(p))}</div>
                     </div>
-                    <div><button class="mini-btn" onclick="startPrivateChatWith('${p.id.replace("'","\'" )}', event)">Chat</button></div>
+                    <div>${isSelf ? '<span style="font-size:11px;color:var(--muted-text)">You</span>' : `<button class="mini-btn" onclick="startPrivateChatWith('${p.id.replace("'","\\'" )}', event)">Chat</button>`}</div>
                 `;
-                el.addEventListener('click', (ev) => startPrivateChatWith(p.id, ev));
+                if (!isSelf) el.addEventListener('click', (ev) => startPrivateChatWith(p.id, ev));
                 listEl.appendChild(el);
             });
         }
 
         function startPrivateChatWith(userId, evt) {
             if (evt && evt.stopPropagation) evt.stopPropagation();
-            const profile = chatProfiles.find(p => p.id === userId);
-            if (!profile) return;
-            const name = getProfileDisplayName(profile);
-            const input = document.getElementById('chatMessageInput');
-            if (input) {
-                input.value = `@${name} `;
-                input.focus();
-            }
-            // ensure members panel closes after selection
+            if (!userId || userId === activeUser?.id) return;
             const panel = document.getElementById('chatMembersPanel');
             if (panel) panel.classList.remove('open');
-            // open direct conversation view
-            openPrivateChatWith(userId);
-        }
-
-        function openPrivateChatWith(userId) {
-            if (!userId || !chatProfiles) return;
-            const profile = chatProfiles.find(p => p.id === userId);
-            if (!profile) return;
-            activePrivateChatUserId = userId;
-            const nameEl = document.getElementById('chatPrivateName');
-            const indicator = document.getElementById('chatPrivateIndicator');
-            if (nameEl) nameEl.textContent = getProfileDisplayName(profile);
-            if (indicator) indicator.style.display = 'inline-block';
-            // fetch conversation to populate view
-            awaitFetchPrivateConversation(userId);
-        }
-
-        function closePrivateChat() {
-            activePrivateChatUserId = null;
-            const indicator = document.getElementById('chatPrivateIndicator');
-            if (indicator) indicator.style.display = 'none';
-            renderChatMessages();
-        }
-
-        function isConversationMessage(msg, otherId) {
-            if (!msg) return false;
-            const me = activeUser?.id;
-            const sender = msg.sender_id;
-            const recIds = Array.isArray(msg.recipient_ids) ? msg.recipient_ids : null;
-            // messages where one of participants is sender and the other is recipient or public
-            if (!me || !otherId) return false;
-            const sentByOneOf = (sender === me || sender === otherId);
-            if (!sentByOneOf) return false;
-            if (!msg.is_private) return true; // public message between them
-            // if private, ensure recipients include the other party
-            if (recIds && Array.isArray(recIds)) {
-                // include cases where recipient ids include either participant
-                return recIds.includes(me) || recIds.includes(otherId);
-            }
-            return false;
-        }
-
-        async function awaitFetchPrivateConversation(userId) {
-            // fetch recent messages then filter client-side
-            setChatStatus('Loading conversation…');
-            const { data, error } = await saudiaClient
-                .from('chat_messages')
-                .select('id, sender_id, sender_name, message, recipient_ids, recipient_roles, is_private, reply_to, created_at')
-                .order('created_at', { ascending: true })
-                .limit(1000);
-            if (error) {
-                console.warn('Private conversation load failed:', error);
-                setChatStatus('Conversation unavailable.');
-                return;
-            }
-            // merge into chatMessages but render only conversation messages
-            chatMessages = Array.isArray(data) ? data : [];
-            renderChatMessages();
-            setChatStatus('Conversation loaded.');
+            openDmThread(userId);
         }
 
         // Autocomplete state
@@ -2276,8 +2570,11 @@
 
         async function initChat() {
             if (!activeUser) return;
+            loadChatLastRead();
             await loadChatProfiles();
             await fetchChatMessages();
+            renderChatThreadsList();
+            updateChatThreadTitle();
             try {
                 disconnectChatChannel();
                 chatChannel = saudiaClient
@@ -2305,7 +2602,9 @@
             if (!body) return;
             body.innerHTML = '';
             chatMessages = Array.isArray(chatMessages) ? chatMessages : [];
-            const msgsToRender = activePrivateChatUserId ? chatMessages.filter(m => isConversationMessage(m, activePrivateChatUserId)) : chatMessages;
+            const msgsToRender = activeChatThreadId === 'team'
+                ? chatMessages.filter(isTeamMessage)
+                : chatMessages.filter(m => isDmMessage(m, activeChatThreadId));
             msgsToRender.forEach(msg => {
                 const wrapper = document.createElement('div');
                 const isSelf = activeUser && msg.sender_id === activeUser.id;
@@ -2380,26 +2679,22 @@
         }
 
         function handleIncomingMessage(newMessage) {
-            // add to local list
             chatMessages.push(newMessage);
-            // determine notifications: if message targets me by id or role, or replies to one of my messages
             try {
-                const me = activeUser?.id;
-                if (me) {
-                    const recIds = Array.isArray(newMessage.recipient_ids) ? newMessage.recipient_ids : null;
-                    const recRoles = Array.isArray(newMessage.recipient_roles) ? newMessage.recipient_roles : null;
-                    const myRole = getProfileRole(activeProfile);
-                    let notify = false;
-                    if (recIds && recIds.includes(me)) notify = true;
-                    if (recRoles && recRoles.includes(myRole)) notify = true;
-                    if (newMessage.reply_to) {
-                        const parent = chatMessages.find(m => m.id === newMessage.reply_to);
-                        if (parent && parent.sender_id === me) notify = true;
-                    }
-                    if (notify) incrementNotification();
+                const threadId = getMessageThreadKey(newMessage);
+                if (threadId && threadId !== 'team') openChatThreads[threadId] = true;
+                const viewingThread = isChatPanelOpen() && activeChatThreadId === threadId;
+                if (shouldCountUnreadForMessage(newMessage) && !viewingThread) {
+                    bumpThreadUnread(threadId, {
+                        message: true,
+                        alert: isAlertForMe(newMessage)
+                    });
+                } else if (viewingThread) {
+                    markThreadRead(threadId);
+                } else {
+                    renderChatThreadsList();
                 }
             } catch (e) { /* ignore */ }
-            // refresh view
             renderChatMessages();
         }
 
@@ -2420,7 +2715,9 @@
                 return;
             }
             chatMessages = data || [];
+            computeUnreadFromMessages();
             renderChatMessages();
+            updateChatThreadTitle();
             setChatStatus(chatMessages.length ? 'Chat is live.' : 'No messages yet. Start the conversation.');
         }
 
@@ -2442,9 +2739,9 @@
                 recipient_roles: mentionData.recipient_roles,
                 is_private: Boolean(mentionData.recipient_ids || mentionData.recipient_roles)
             };
-            // If a private conversation is active, direct the message to that user
-            if (activePrivateChatUserId) {
-                payload.recipient_ids = [activePrivateChatUserId];
+            // If a direct chatbox is active, send as private message to that member
+            if (activeChatThreadId && activeChatThreadId !== 'team') {
+                payload.recipient_ids = [activeChatThreadId];
                 payload.recipient_roles = null;
                 payload.is_private = true;
             }
