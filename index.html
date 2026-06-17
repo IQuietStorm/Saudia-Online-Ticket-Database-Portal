@@ -381,7 +381,63 @@
         .chat-autocomplete .auto-item .auto-avatar { width:30px; height:30px; border-radius:50%; background:var(--islamic-green); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; }
         .chat-reply-box { font-size:13px; }
         .chat-message.reply-highlight { box-shadow: 0 0 0 2px rgba(0,144,0,0.06); }
-        .chat-message .reply-btn { font-size:12px; margin-left:8px; padding:4px 6px; border-radius:6px; }
+        .chat-message { position: relative; }
+        .chat-message:hover { background: rgba(0,0,0,0.02); }
+        .chat-context-menu {
+            min-width: 160px;
+            background: var(--card-bg);
+            border: 1px solid rgba(0,0,0,0.12);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            border-radius: 10px;
+            overflow: hidden;
+            z-index: 12000;
+        }
+        .chat-context-menu button {
+            width: 100%;
+            padding: 10px 12px;
+            text-align: left;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .chat-context-menu button:hover { background: rgba(0,0,0,0.04); }
+        .chat-emoji-btn {
+            border: 1px solid var(--input-border);
+            background: var(--card-bg);
+            border-radius: 999px;
+            width: 42px;
+            height: 42px;
+            font-size: 20px;
+            cursor: pointer;
+            margin-right: 6px;
+        }
+        .chat-emoji-picker {
+            position: absolute;
+            bottom: 64px;
+            left: 12px;
+            display: grid;
+            grid-template-columns: repeat(6, minmax(32px, 1fr));
+            gap: 8px;
+            padding: 10px;
+            background: var(--card-bg);
+            border: 1px solid rgba(0,0,0,0.12);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+            border-radius: 14px;
+            z-index: 11000;
+            width: calc(100% - 24px);
+            max-width: 320px;
+        }
+        .chat-emoji-picker button {
+            font-size: 20px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+        }
+        .chat-emoji-picker button:hover { background: rgba(0,0,0,0.06); }
         .chat-notify-bell { position:relative; display:inline-block; }
         .chat-notify-bell .badge { position:absolute; top:-8px; right:-10px; background:var(--islamic-green); color:#fff; font-size:11px; padding:2px 6px; border-radius:999px; display:none; }
         .account-avatar-btn {
@@ -1105,10 +1161,13 @@
                 Replying to <span id="chatReplyName" style="font-weight:600"></span>: <span id="chatReplySnippet" style="margin-left:8px;color:var(--muted-text)"></span>
                 <button class="mini-btn alt" style="margin-left:12px;" onclick="cancelReply()">Cancel</button>
             </div>
+            <div id="chatContextMenu" class="chat-context-menu" style="display:none; position:absolute;"></div>
             <div class="chat-input-row">
+                <button id="chatEmojiBtn" class="chat-emoji-btn" type="button" onclick="toggleEmojiPicker()" title="Add emoji">😊</button>
                 <input id="chatMessageInput" type="text" placeholder="Write a message..." oninput="handleChatInput(this, event)" onkeydown="handleChatKeydown(this, event)">
-                <div id="chatAutocomplete" class="chat-autocomplete" role="listbox" aria-hidden="true"></div>
                 <button id="chatSendBtn" class="chat-send-btn" onclick="sendChatMessage()">Send</button>
+                <div id="chatEmojiPicker" class="chat-emoji-picker" aria-hidden="true" style="display:none;"></div>
+                <div id="chatAutocomplete" class="chat-autocomplete" role="listbox" aria-hidden="true"></div>
             </div>
         </div>
 
@@ -1167,6 +1226,8 @@
         let activePrivateChatUserId = null;
         let replyToMessageId = null;
         let notificationCount = 0;
+        let chatContextMessageId = null;
+        const emojiList = ['😀','😄','😅','😊','😍','😎','😡','😭','👍','🎉','❤️','🙏','🤝','💬','🤩'];
 
         function setNotificationCount(n) {
             notificationCount = Math.max(0, Number(n) || 0);
@@ -1858,6 +1919,7 @@
                 const { data, error } = await saudiaClient
                     .from('profiles')
                     .select('id, full_name, email, role, user_role')
+                    .order('full_name', { ascending: true })
                     .range(from, to);
                 if (error) {
                     console.warn('Failed to load profiles page', from, to, error);
@@ -2129,6 +2191,12 @@
                         if (!newMessage || !newMessage.message) return;
                         handleIncomingMessage(newMessage);
                     })
+                    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'chat_messages' }, payload => {
+                        if (!payload?.old) return;
+                        const deletedId = payload.old.id;
+                        chatMessages = chatMessages.filter(m => m.id !== deletedId);
+                        renderChatMessages();
+                    })
                     .subscribe();
             } catch (error) {
                 console.warn('Chat subscription failed:', error);
@@ -2164,8 +2232,33 @@
                     ${targetSummary ? `<div class="chat-target">${escapeHtml(targetSummary)}</div>` : ''}
                     ${replyHtml}
                     <div>${escapeHtml(msg.message)}</div>
-                    <div style="margin-top:8px; text-align:right;"><button class="reply-btn" onclick="setReplyTo('${msg.id}')">Reply</button></div>
                 `;
+                wrapper.addEventListener('dblclick', () => setReplyTo(msg.id));
+                wrapper.addEventListener('contextmenu', (ev) => {
+                    ev.preventDefault();
+                    if (activeUser && msg.sender_id === activeUser.id) {
+                        showChatContextMenu(ev.pageX, ev.pageY, msg.id);
+                    } else {
+                        hideChatContextMenu();
+                    }
+                });
+                let touchStartX = 0;
+                let touchStartY = 0;
+                wrapper.addEventListener('touchstart', ev => {
+                    if (ev.touches && ev.touches.length === 1) {
+                        touchStartX = ev.touches[0].clientX;
+                        touchStartY = ev.touches[0].clientY;
+                    }
+                });
+                wrapper.addEventListener('touchend', ev => {
+                    const touch = ev.changedTouches && ev.changedTouches[0];
+                    if (!touch) return;
+                    const dx = touch.clientX - touchStartX;
+                    const dy = touch.clientY - touchStartY;
+                    if (dx > 80 && Math.abs(dy) < 40) {
+                        setReplyTo(msg.id);
+                    }
+                });
                 body.appendChild(wrapper);
             });
             if (body.children.length) {
@@ -2184,6 +2277,7 @@
             if (snipEl) snipEl.textContent = (msg.message || '').slice(0, 140);
             if (box) box.style.display = 'block';
             const input = document.getElementById('chatMessageInput'); if (input) input.focus();
+            hideChatContextMenu();
         }
 
         function cancelReply() {
@@ -2276,12 +2370,103 @@
             // clear reply state after successful send
             replyToMessageId = null;
             const box = document.getElementById('chatReplyBox'); if (box) box.style.display = 'none';
+            hideEmojiPicker();
         }
 
         function applyRememberMePreferenceFromCheckbox() {
             const want = document.getElementById('rememberMe')?.checked ?? true;
             localStorage.setItem('tms_remember_me', want ? '1' : '0');
         }
+
+        function toggleEmojiPicker() {
+            const picker = document.getElementById('chatEmojiPicker');
+            if (!picker) return;
+            if (picker.style.display === 'block') {
+                hideEmojiPicker();
+                return;
+            }
+            renderEmojiPicker();
+            picker.style.display = 'grid';
+            picker.setAttribute('aria-hidden', 'false');
+        }
+
+        function hideEmojiPicker() {
+            const picker = document.getElementById('chatEmojiPicker');
+            if (!picker) return;
+            picker.style.display = 'none';
+            picker.setAttribute('aria-hidden', 'true');
+        }
+
+        function renderEmojiPicker() {
+            const picker = document.getElementById('chatEmojiPicker');
+            if (!picker) return;
+            picker.innerHTML = '';
+            emojiList.forEach(emoji => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.textContent = emoji;
+                btn.addEventListener('click', () => insertEmoji(emoji));
+                picker.appendChild(btn);
+            });
+        }
+
+        function insertEmoji(emoji) {
+            const input = document.getElementById('chatMessageInput');
+            if (!input) return;
+            const start = input.selectionStart || 0;
+            const end = input.selectionEnd || start;
+            const value = input.value || '';
+            input.value = value.slice(0, start) + emoji + value.slice(end);
+            const newPos = start + emoji.length;
+            input.focus();
+            try { input.setSelectionRange(newPos, newPos); } catch (e) {}
+            hideEmojiPicker();
+        }
+
+        function showChatContextMenu(x, y, messageId) {
+            const menu = document.getElementById('chatContextMenu');
+            if (!menu) return;
+            chatContextMessageId = messageId;
+            menu.innerHTML = `
+                <button type="button" onclick="deleteChatMessage()">Delete message</button>
+            `;
+            menu.style.display = 'block';
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+        }
+
+        function hideChatContextMenu() {
+            const menu = document.getElementById('chatContextMenu');
+            if (!menu) return;
+            menu.style.display = 'none';
+            chatContextMessageId = null;
+        }
+
+        async function deleteChatMessage() {
+            if (!chatContextMessageId) return;
+            const messageId = chatContextMessageId;
+            hideChatContextMenu();
+            const { error } = await saudiaClient.from('chat_messages').delete().eq('id', messageId);
+            if (error) {
+                console.warn('Unable to delete chat message:', error);
+                alert('Unable to delete message.');
+                return;
+            }
+            chatMessages = chatMessages.filter(m => m.id !== messageId);
+            renderChatMessages();
+        }
+
+        document.addEventListener('click', (ev) => {
+            const menu = document.getElementById('chatContextMenu');
+            const emojiPicker = document.getElementById('chatEmojiPicker');
+            const emojiBtn = document.getElementById('chatEmojiBtn');
+            if (menu && menu.style.display === 'block' && !menu.contains(ev.target)) {
+                hideChatContextMenu();
+            }
+            if (emojiPicker && emojiPicker.style.display === 'block' && !emojiPicker.contains(ev.target) && ev.target !== emojiBtn) {
+                hideEmojiPicker();
+            }
+        });
 
         function syncRememberMeCheckbox() {
             const cb = document.getElementById('rememberMe');
