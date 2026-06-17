@@ -16,6 +16,8 @@ ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
 -- Remove existing policies so the script can be run multiple times
 DROP POLICY IF EXISTS "authenticated_select" ON public.chat_messages;
 DROP POLICY IF EXISTS "authenticated_insert" ON public.chat_messages;
+DROP POLICY IF EXISTS "authenticated_delete_own" ON public.chat_messages;
+DROP POLICY IF EXISTS "admin_delete_any" ON public.chat_messages;
 
 -- Recreate SELECT policy
 CREATE POLICY "authenticated_select" ON public.chat_messages
@@ -43,3 +45,26 @@ CREATE POLICY "authenticated_select" ON public.chat_messages
 CREATE POLICY "authenticated_insert" ON public.chat_messages
   FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
+
+-- Allow users to permanently delete their own messages
+CREATE POLICY "authenticated_delete_own" ON public.chat_messages
+  FOR DELETE
+  USING (
+    auth.role() = 'authenticated'
+    AND sender_id = auth.uid()
+  );
+
+-- Allow admins to permanently delete any message
+CREATE POLICY "admin_delete_any" ON public.chat_messages
+  FOR DELETE
+  USING (
+    auth.role() = 'authenticated'
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles p
+      WHERE p.id = auth.uid()
+        AND (
+          LOWER(COALESCE(p.role, '')) = 'admin'
+        )
+    )
+  );
