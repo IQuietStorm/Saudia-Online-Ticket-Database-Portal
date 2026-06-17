@@ -1955,11 +1955,54 @@
             }
         }
 
+        async function fetchChatProfilesDirect() {
+            const pageSize = SUPABASE_PAGE_SIZE || 1000;
+            const selectAttempts = [
+                { select: 'id, full_name, email, role, user_role', order: 'full_name' },
+                { select: 'id, full_name, email, role', order: 'full_name' },
+                { select: 'id, email, role', order: 'email' },
+                { select: 'id, email', order: 'email' }
+            ];
+
+            for (const attempt of selectAttempts) {
+                let from = 0;
+                let all = [];
+                let failed = false;
+                while (true) {
+                    const to = from + pageSize - 1;
+                    const { data, error } = await saudiaClient
+                        .from('profiles')
+                        .select(attempt.select)
+                        .order(attempt.order, { ascending: true })
+                        .range(from, to);
+                    if (error) {
+                        console.warn('Chat profiles fetch failed:', attempt.select, error);
+                        failed = true;
+                        break;
+                    }
+                    if (!data || !data.length) break;
+                    all = all.concat(data);
+                    if (data.length < pageSize) break;
+                    from += pageSize;
+                }
+                if (!failed) {
+                    return all.map(row => {
+                        syncProfileRoleFields(row);
+                        return row;
+                    });
+                }
+            }
+            return [];
+        }
+
         async function loadChatProfiles() {
             // Prefer RPC: reads all auth accounts and bypasses restrictive profile RLS.
             const rpc = await saudiaClient.rpc('list_chat_members');
             if (!rpc.error && Array.isArray(rpc.data)) {
-                chatProfiles = rpc.data.filter(p => p && p.id);
+                chatProfiles = rpc.data.filter(p => p && p.id).map(row => {
+                    syncProfileRoleFields(row);
+                    return row;
+                });
                 ensureActiveUserInChatProfiles();
                 updateMembersBtnCount();
                 return;
@@ -1971,27 +2014,7 @@
                 );
             }
 
-            // Fallback: direct profiles query (requires open SELECT policy above).
-            const pageSize = SUPABASE_PAGE_SIZE || 1000;
-            let from = 0;
-            let all = [];
-            while (true) {
-                const to = from + pageSize - 1;
-                const { data, error } = await saudiaClient
-                    .from('profiles')
-                    .select('id, full_name, email, role, user_role')
-                    .order('full_name', { ascending: true })
-                    .range(from, to);
-                if (error) {
-                    console.warn('Failed to load profiles page', from, to, error);
-                    break;
-                }
-                if (!data || !data.length) break;
-                all = all.concat(data);
-                if (data.length < pageSize) break;
-                from += pageSize;
-            }
-            chatProfiles = all;
+            chatProfiles = await fetchChatProfilesDirect();
             ensureActiveUserInChatProfiles();
             updateMembersBtnCount();
         }
