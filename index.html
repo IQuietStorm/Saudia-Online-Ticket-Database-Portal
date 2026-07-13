@@ -7,6 +7,7 @@
     <link rel="icon" type="image/png" href="logo.png">
     
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.1/dist/xlsx.full.min.js"></script>
     <style>
         :root { 
             --islamic-green: #009000; 
@@ -911,6 +912,17 @@
             cursor: pointer;
             margin-bottom: 4px;
         }
+        .import-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .import-controls .muted {
+            font-size: 12px;
+            color: var(--muted-text);
+        }
         html[dir="rtl"] body { font-family: ui-serif, "Traditional Arabic", "Segoe UI", Tahoma, serif; }
         html[dir="rtl"] .header-title { letter-spacing: 0; }
         html[dir="rtl"] .input-grid,
@@ -1249,12 +1261,15 @@
                 <button id="save-ticket-btn" onclick="saveTicket()" data-i18n="btn.saveTicket">Save Ticket</button>
                 <button id="admin-upd" data-i18n="btn.update" class="btn-update" onclick="updateTicket()">Update</button>
                 <button id="admin-del" data-i18n="btn.delete" class="btn-delete" onclick="deleteTicket()">Delete</button>
+                <input type="file" id="excelImportInput" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleExcelImportSelection(event)">
+                <button id="excel-import-btn" class="mini-btn alt" type="button" onclick="document.getElementById('excelImportInput').click()">Import Excel</button>
                 <label class="export-select-all-row">
                     <input type="checkbox" id="selectAllSavedExport" onchange="onSelectAllSavedExportChange()">
                     <span id="selectAllSavedExportLabel">Select all saved tickets for export</span>
                 </label>
                 <button id="export-csv-btn" style="background:#2e7d32" onclick="exportSelectedToCSV()" data-i18n="btn.exportCsv">Export CSV</button>
             </div>
+            <div id="excelImportStatus" class="import-controls"><span class="muted">Upload an Excel or CSV file with ticket rows to import them into the database.</span></div>
             
             <div class="filter-bar">
                 <div class="filter-item" style="grid-column: span 2;">
@@ -3041,6 +3056,29 @@
             closeForwardPanel();
         }
 
+        function playChatNotificationSound() {
+            try {
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContextClass) return;
+                const ctx = new AudioContextClass();
+                const oscillator = ctx.createOscillator();
+                const gain = ctx.createGain();
+                oscillator.type = 'triangle';
+                oscillator.frequency.setValueAtTime(740, ctx.currentTime);
+                oscillator.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.28);
+                gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.38);
+                oscillator.connect(gain);
+                gain.connect(ctx.destination);
+                oscillator.start();
+                oscillator.stop(ctx.currentTime + 0.4);
+                setTimeout(() => ctx.close().catch(() => {}), 450);
+            } catch (e) {
+                console.warn('Chat sound notification unavailable:', e);
+            }
+        }
+
         function handleIncomingMessage(newMessage) {
             newMessage = normalizeChatMessage(newMessage);
             if (chatMessages.some(m => m.id === newMessage.id)) return;
@@ -3054,6 +3092,9 @@
                         message: true,
                         alert: isAlertForMe(newMessage)
                     });
+                    if (newMessage.sender_id && newMessage.sender_id !== activeUser?.id) {
+                        playChatNotificationSound();
+                    }
                 } else if (viewingThread) {
                     markThreadRead(threadId);
                 } else {
@@ -4862,6 +4903,196 @@
 
         function closePDFView() {
             document.getElementById('pdfModal').classList.remove('active');
+        }
+
+        function normalizeExcelHeader(value) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .normalize('NFKD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '');
+        }
+
+        function normalizeExcelDate(value) {
+            if (!value && value !== 0) return null;
+            if (value instanceof Date) {
+                return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+            }
+            if (typeof value === 'number') {
+                const parsed = new Date((value - 25569) * 86400 * 1000);
+                return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+            }
+            const text = String(value).trim();
+            if (!text) return null;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+            const parsed = new Date(text);
+            if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+            return null;
+        }
+
+        function normalizeExcelNumber(value) {
+            if (value === null || value === undefined || value === '') return null;
+            if (typeof value === 'number') return value;
+            const text = String(value).trim();
+            if (!text) return null;
+            const parsed = Number(text.replace(/,/g, ''));
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+
+        function buildImportedTicketPayload(rawRow) {
+            const normalized = {};
+            Object.entries(rawRow || {}).forEach(([key, value]) => {
+                normalized[normalizeExcelHeader(key)] = value;
+            });
+
+            const pick = (...keys) => {
+                for (const key of keys) {
+                    if (normalized[key] !== undefined && normalized[key] !== null && String(normalized[key]).trim() !== '') {
+                        return normalized[key];
+                    }
+                }
+                return null;
+            };
+
+            const ticketNum = String(pick('ticket_num', 'ticket_number', 'ticket_no', 'ticket', 'ticketnumber', 'ticketno') || '').trim();
+            const type = String(pick('type', 'ticket_type', 'tickettype') || 'Fresh Issue').trim() || 'Fresh Issue';
+            const status = String(pick('status', 'ticket_status', 'ticketstatus') || 'Flown').trim() || 'Flown';
+            const issuerName = String(pick('issuer_name', 'issuer', 'staff_name', 'processed_by') || '').trim();
+            const issueDate = normalizeExcelDate(pick('issue_date', 'issued_date', 'date_of_issue'));
+            const flightDate = normalizeExcelDate(pick('flight_date', 'date_of_flight'));
+            const route = String(pick('route', 'travel_route') || '').trim();
+            const flightType = String(pick('flight_type', 'flighttype') || '').trim();
+            const reasonValue = String(pick('reason', 'extra_reason', 'type_reason', 'emd_reason', 'reissue_reason', 'rebook_reason') || '').trim();
+            const previousTicketNum = String(pick('previous_ticket_num', 'previous_ticket', 'previous_ticket_number') || '').trim();
+            const statusComment = String(pick('status_comment', 'comment', 'remarks') || '').trim();
+            const ticketValue = normalizeExcelNumber(pick('ticket_value_naira', 'ticket_value', 'value'));
+            const refundTax = normalizeExcelNumber(pick('refund_tax', 'tax'));
+            const refundStatus = String(pick('refund_status', 'refundstate') || '').trim();
+            const refundValue = normalizeExcelNumber(pick('refund_value_naira', 'refund_value'));
+            const refundBy = String(pick('refund_by', 'processed_by_refund') || '').trim();
+            const refundReason = String(pick('refund_reason', 'reason_for_refund') || '').trim();
+            const refundRecipient = String(pick('refund_recipient', 'recipient') || '').trim();
+            const refundDate = normalizeExcelDate(pick('refund_date', 'date_of_refund'));
+            const refundAmount = normalizeExcelNumber(pick('refund_amount_naira', 'refund_amount'));
+            const processedBy = String(pick('processed_by', 'staff', 'entered_by') || activeProfile?.full_name || activeUser?.email || 'Imported').trim();
+
+            const payload = {
+                ticket_num: ticketNum,
+                type,
+                status,
+                issue_date: issueDate,
+                issuer_name: issuerName || null,
+                flight_date: flightDate,
+                route: route || null,
+                flight_type: flightType || null,
+                status_comment: statusComment || null,
+                processed_by: processedBy || null,
+                ticket_value_naira: ticketValue,
+                refund_tax: refundTax,
+                reissue_reason: type === 'Re-issue' ? reasonValue || null : null,
+                rebook_reason: type === 'Re-booked' ? reasonValue || null : null,
+                emd_reason: type === 'EMD' ? reasonValue || null : null,
+                previous_ticket_num: (type === 'Re-issue' || type === 'Re-booked') ? previousTicketNum || null : null,
+                refund_status: status === 'Refund' ? refundStatus || null : null,
+                refund_value_naira: status === 'Refund' ? refundValue : null,
+                refund_by: status === 'Refund' ? refundBy || null : null,
+                refund_reason: status === 'Refund' ? refundReason || null : null,
+                refund_recipient: status === 'Refund' && refundStatus === 'Approved and paid' ? refundRecipient || null : null,
+                refund_date: status === 'Refund' && refundStatus === 'Approved and paid' ? refundDate : null,
+                refund_amount_naira: status === 'Refund' && refundStatus === 'Approved and paid' ? refundAmount : null
+            };
+
+            const minimal = type === 'EMD' || status === 'CANX';
+            if (minimal) {
+                payload.flight_date = null;
+                payload.flight_type = null;
+                payload.status_comment = null;
+                if (status === 'CANX') {
+                    payload.emd_reason = null;
+                    payload.reissue_reason = null;
+                    payload.rebook_reason = null;
+                    payload.previous_ticket_num = null;
+                }
+            }
+            return payload;
+        }
+
+        async function handleExcelImportSelection(event) {
+            const file = event?.target?.files?.[0];
+            if (!file) return;
+            const input = document.getElementById('excelImportInput');
+            const statusEl = document.getElementById('excelImportStatus');
+            if (!input || !statusEl) return;
+
+            if (!canEditTickets()) {
+                input.value = '';
+                return alert('Excel import requires supervisor or admin privileges.');
+            }
+
+            const accepted = ['.xlsx', '.xls', '.csv'];
+            const isAccepted = accepted.some(ext => file.name.toLowerCase().endsWith(ext));
+            if (!isAccepted) {
+                input.value = '';
+                return alert('Please choose an Excel or CSV file.');
+            }
+
+            statusEl.innerHTML = '<span class="muted">Importing rows…</span>';
+            try {
+                const data = await file.arrayBuffer();
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+                if (!rows.length) {
+                    statusEl.innerHTML = '<span class="muted">The selected sheet has no rows to import.</span>';
+                    input.value = '';
+                    return;
+                }
+
+                let importedCount = 0;
+                let skippedCount = 0;
+                for (const row of rows) {
+                    const payload = buildImportedTicketPayload(row);
+                    if (!payload.ticket_num || !/^\d{13}$/.test(String(payload.ticket_num))) {
+                        skippedCount += 1;
+                        continue;
+                    }
+
+                    const { data: existingRows, error: lookupError } = await saudiaClient
+                        .from('tickets')
+                        .select('id')
+                        .eq('ticket_num', String(payload.ticket_num))
+                        .limit(1);
+                    if (lookupError) {
+                        console.warn('Excel import duplicate lookup failed:', lookupError);
+                        skippedCount += 1;
+                        continue;
+                    }
+                    if (existingRows && existingRows.length) {
+                        skippedCount += 1;
+                        continue;
+                    }
+
+                    const { error } = await saudiaClient.from('tickets').insert([payload]);
+                    if (error) {
+                        console.warn('Excel import row failed:', error);
+                        skippedCount += 1;
+                        continue;
+                    }
+                    importedCount += 1;
+                }
+
+                statusEl.innerHTML = `<span class="muted">Imported ${importedCount} ticket row(s). ${skippedCount ? `Skipped ${skippedCount} row(s).` : ''}</span>`;
+                if (importedCount) {
+                    await getTickets();
+                }
+            } catch (error) {
+                console.error('Excel import failed:', error);
+                statusEl.innerHTML = '<span class="muted">The file could not be imported. Please confirm the sheet format and try again.</span>';
+            } finally {
+                input.value = '';
+            }
         }
 
         async function saveTicket() {
